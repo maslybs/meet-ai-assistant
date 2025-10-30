@@ -117,6 +117,7 @@ try:
     from livekit.agents.llm import function_tool
     from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
     from livekit.plugins import google
+    from livekit.agents.llm.realtime import RealtimeError
     try:
         from livekit import rtc as lk_rtc
     except ImportError:  # pragma: no cover - rtc may be optional
@@ -127,6 +128,7 @@ except ImportError as import_error:  # pragma: no cover - depends on local env
     ) = RoomInputOptions = RoomOutputOptions = RunContext = WorkerOptions = cli = voice = None  # type: ignore[assignment]
     function_tool = None  # type: ignore[assignment]
     google = None  # type: ignore[assignment]
+    RealtimeError = Exception  # type: ignore[assignment]
     ATTRIBUTE_PUBLISH_ON_BEHALF = "lk.publish_on_behalf"  # type: ignore[assignment]
     lk_rtc = None  # type: ignore[assignment]
     _LIVEKIT_IMPORT_ERROR: Optional[ImportError] = import_error
@@ -325,6 +327,38 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
 
         greeted_identities: set[str] = set()
 
+        async def _send_greeting(identity: str) -> bool:
+            """
+            Deliver the welcome message to the participant.
+            Retries once if the realtime backend is still spinning up.
+            Returns True if the greeting was delivered.
+            """
+
+            greeting_text = (
+                "Привітай користувача, ввічливо назви себе Ганною та коротко запропонуй допомогу."
+            )
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    await session.generate_reply(instructions=greeting_text)
+                    return True
+                except RealtimeError as exc:
+                    backoff = 0.6 * attempt
+                    _VIDEO_LOGGER.warning(
+                        "Greeting attempt %s for %s failed due to realtime timeout: %s (retry in %.1fs)",
+                        attempt,
+                        identity,
+                        exc,
+                        backoff if attempt < max_attempts else 0.0,
+                    )
+                    if attempt >= max_attempts:
+                        return False
+                    await asyncio.sleep(backoff)
+                except Exception as exc:  # pragma: no cover - best effort logging
+                    _VIDEO_LOGGER.warning("Failed to send greeting to %s: %s", identity, exc)
+                    return False
+            return False
+
         def _handle_participant_connected(participant: Any) -> None:
             identity = getattr(participant, "identity", None)
             if identity is None:
@@ -383,13 +417,9 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                 if identity in greeted_identities:
                     return
 
-                try:
-                    await session.generate_reply(
-                        instructions="Привітай користувача, ввічливо назви себе Ганною та коротко запропонуй допомогу."
-                    )
+                greeted = await _send_greeting(identity)
+                if greeted:
                     greeted_identities.add(identity)
-                except Exception as exc:  # pragma: no cover - best effort logging
-                    _VIDEO_LOGGER.warning("Failed to send greeting: %s", exc)
 
             asyncio.create_task(_initialize_participant())
 
@@ -458,6 +488,7 @@ def main() -> None:
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=config.agent_name,
+            initialize_process_timeout=float(os.getenv("VOICE_AGENT_INIT_TIMEOUT", "15")),
         )
     )
 
