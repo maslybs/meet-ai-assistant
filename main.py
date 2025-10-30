@@ -115,13 +115,20 @@ try:
         voice,
     )
     from livekit.agents.llm import function_tool
+    from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
     from livekit.plugins import google
+    try:
+        from livekit import rtc as lk_rtc
+    except ImportError:  # pragma: no cover - rtc may be optional
+        lk_rtc = None  # type: ignore[assignment]
 except ImportError as import_error:  # pragma: no cover - depends on local env
     Agent = (
         AgentSession
     ) = RoomInputOptions = RoomOutputOptions = RunContext = WorkerOptions = cli = voice = None  # type: ignore[assignment]
     function_tool = None  # type: ignore[assignment]
     google = None  # type: ignore[assignment]
+    ATTRIBUTE_PUBLISH_ON_BEHALF = "lk.publish_on_behalf"  # type: ignore[assignment]
+    lk_rtc = None  # type: ignore[assignment]
     _LIVEKIT_IMPORT_ERROR: Optional[ImportError] = import_error
 else:
     _LIVEKIT_IMPORT_ERROR = None
@@ -144,6 +151,7 @@ class AgentConfig:
     """Configuration sourced from environment variables for the Gemini RealtimeModel."""
 
     instructions: str
+    agent_name: str
     model: str = "gemini-1.5-pro"
     voice: str = "Charis"
     temperature: float = 0.8
@@ -218,6 +226,7 @@ def load_config() -> AgentConfig:
 
     return AgentConfig(
         instructions=instructions,
+        agent_name=os.getenv("VOICE_AGENT_NAME", "hanna-agent").strip() or "hanna-agent",
         model=os.getenv("GEMINI_MODEL", "gemini-1.5-pro"),
         voice=os.getenv("GEMINI_TTS_VOICE", "Charis"),
         temperature=float(os.getenv("GEMINI_TEMPERATURE", 0.8)),
@@ -270,36 +279,130 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
 
     if room_io is not None:
 
+        async def _wait_for_media_ready(identity: str, timeout: float = 10.0) -> None:
+            """
+            Wait until RoomIO links to the participant and the media pipelines are live.
+            This avoids greeting the user before audio input/output are ready.
+            """
+
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+
+            while True:
+                linked = room_io.linked_participant
+                audio_input = room_io.audio_input
+                audio_ready = True
+
+                if audio_input is not None and lk_rtc is not None:
+                    source = getattr(audio_input, "publication_source", None)
+                    audio_ready = source not in {
+                        None,
+                        lk_rtc.TrackSource.SOURCE_UNKNOWN,
+                    }
+
+                if (
+                    linked is not None
+                    and getattr(linked, "identity", None) == identity
+                    and audio_ready
+                ):
+                    break
+
+                if loop.time() > deadline:
+                    raise TimeoutError(
+                        f"Timed out waiting for media streams for participant '{identity}'."
+                    )
+                await asyncio.sleep(0.1)
+
+            subscribed = room_io.subscribed_fut
+            if subscribed is not None and not subscribed.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(subscribed), timeout)
+                except asyncio.TimeoutError:
+                    _VIDEO_LOGGER.warning(
+                        "Timed out waiting for LiveKit to subscribe to agent audio for %s",
+                        identity,
+                    )
+
+        greeted_identities: set[str] = set()
+
         def _handle_participant_connected(participant: Any) -> None:
-            linked = room_io.linked_participant
-            target_identity = getattr(room_io, "_participant_identity", None)
             identity = getattr(participant, "identity", None)
             if identity is None:
                 return
 
-            if linked is None:
-                room_io.set_participant(identity)
-            elif getattr(linked, "identity", None) == identity:
-                room_io.set_participant(identity)
-            elif target_identity is None:
-                # default behaviour is to follow the first participant
-                room_io.set_participant(identity)
+            local_identity = getattr(ctx.room.local_participant, "identity", None)
+            attributes = getattr(participant, "attributes", {}) or {}
+            if attributes.get(ATTRIBUTE_PUBLISH_ON_BEHALF) == local_identity:
+                return
 
-            async def _greet() -> None:
+            if lk_rtc is not None:
+                configured_kinds = getattr(getattr(room_io, "_input_options", None), "participant_kinds", None)
+                if isinstance(configured_kinds, list) and configured_kinds:
+                    allowed_kinds = set(configured_kinds)
+                else:
+                    allowed_kinds = {
+                        getattr(lk_rtc.ParticipantKind, "PARTICIPANT_KIND_STANDARD", None),
+                        getattr(lk_rtc.ParticipantKind, "PARTICIPANT_KIND_SIP", None),
+                    }
+                participant_kind = getattr(participant, "kind", None)
+                if participant_kind not in allowed_kinds:
+                    return
+
+            linked = room_io.linked_participant
+            target_identity = getattr(room_io, "_participant_identity", None)
+
+            should_follow = False
+            if linked is None:
+                should_follow = True
+            elif getattr(linked, "identity", None) == identity:
+                should_follow = True
+            elif target_identity is None:
+                should_follow = True
+            elif target_identity == identity:
+                should_follow = True
+
+            if not should_follow:
+                return
+
+            room_io.set_participant(identity)
+
+            async def _initialize_participant() -> None:
+                try:
+                    await _wait_for_media_ready(identity)
+                except TimeoutError as exc:
+                    _VIDEO_LOGGER.warning("Media for %s not ready: %s", identity, exc)
+                except Exception as exc:  # pragma: no cover - best effort logging
+                    _VIDEO_LOGGER.warning("Unexpected media wait failure for %s: %s", identity, exc)
+
+                try:
+                    if not session.input.audio_enabled:
+                        session.input.set_audio_enabled(True)
+                except Exception as exc:  # pragma: no cover - defensive
+                    _VIDEO_LOGGER.debug("Failed to ensure audio input enabled: %s", exc)
+
+                if identity in greeted_identities:
+                    return
+
                 try:
                     await session.generate_reply(
                         instructions="Привітай користувача, ввічливо назви себе Ганною та коротко запропонуй допомогу."
                     )
+                    greeted_identities.add(identity)
                 except Exception as exc:  # pragma: no cover - best effort logging
                     _VIDEO_LOGGER.warning("Failed to send greeting: %s", exc)
 
-            asyncio.create_task(_greet())
+            asyncio.create_task(_initialize_participant())
 
         def _handle_participant_disconnected(participant: Any) -> None:
-            linked = room_io.linked_participant
             identity = getattr(participant, "identity", None)
-            if linked is None or identity is None:
+            if identity is None:
                 return
+
+            greeted_identities.discard(identity)
+            linked = room_io.linked_participant
+            if linked is None:
+                return
+
             if getattr(linked, "identity", None) == identity:
                 room_io.unset_participant()
 
@@ -309,7 +412,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
         for participant in ctx.room.remote_participants.values():
             _handle_participant_connected(participant)
 
-        def _cleanup_callbacks() -> None:
+        async def _cleanup_callbacks() -> None:
             ctx.room.off("participant_connected", _handle_participant_connected)
             ctx.room.off("participant_disconnected", _handle_participant_disconnected)
 
@@ -354,6 +457,7 @@ def main() -> None:
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            agent_name=config.agent_name,
         )
     )
 
@@ -369,50 +473,90 @@ def _apply_env_cli_defaults() -> None:
     if len(sys.argv) > 1:
         return
 
-    room = os.getenv("VOICE_AGENT_ROOM")
-    if not room:
-        return
+    autostart_mode = os.getenv("VOICE_AGENT_AUTOSTART_MODE", "dispatch").strip().lower() or "dispatch"
+    if autostart_mode not in {"dispatch", "connect"}:
+        print(
+            f"[voice-agent] Unknown VOICE_AGENT_AUTOSTART_MODE '{autostart_mode}', falling back to dispatch.",
+            file=sys.stderr,
+        )
+        autostart_mode = "dispatch"
 
+    room = os.getenv("VOICE_AGENT_ROOM")
     url = os.getenv("LIVEKIT_URL")
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     watch_flag = os.getenv("VOICE_AGENT_WATCH", "").strip().lower()
 
-    cli_args = ["connect", "--room", room]
+    if autostart_mode == "connect":
+        if not room:
+            print(
+                "[voice-agent] VOICE_AGENT_AUTOSTART_MODE=connect requires VOICE_AGENT_ROOM.",
+                file=sys.stderr,
+            )
+            return
 
+        cli_args = ["connect", "--room", room]
+        if url:
+            cli_args.extend(["--url", url])
+        if api_key:
+            cli_args.extend(["--api-key", api_key])
+        if api_secret:
+            cli_args.extend(["--api-secret", api_secret])
+        if watch_flag in {"0", "false", "no"}:
+            cli_args.append("--no-watch")
+
+        wait_for_occupant = os.getenv("VOICE_AGENT_WAIT_FOR_OCCUPANT", "true").strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "no",
+        }
+        if wait_for_occupant:
+            if not (url and api_key and api_secret):
+                print(
+                    "[voice-agent] VOICE_AGENT_WAIT_FOR_OCCUPANT is enabled but LIVEKIT_URL/API_KEY/API_SECRET "
+                    "are missing. Skipping occupancy check.",
+                    file=sys.stderr,
+                )
+            else:
+                try:
+                    _wait_for_room_participants(room, url, api_key, api_secret)
+                except Exception as exc:  # pragma: no cover - best effort guard
+                    print(
+                        f"[voice-agent] Failed to wait for room occupants: {exc}. Continuing without guard.",
+                        file=sys.stderr,
+                    )
+
+        print(
+            f"[voice-agent] VOICE_AGENT_ROOM detected. Defaulting to `python main.py {' '.join(cli_args)}`.",
+            file=sys.stderr,
+        )
+        sys.argv.extend(cli_args)
+        return
+
+    # dispatch mode (default)
+    cli_args = ["dev"]
+    if watch_flag in {"0", "false", "no"}:
+        cli_args.append("--no-watch")
     if url:
         cli_args.extend(["--url", url])
     if api_key:
         cli_args.extend(["--api-key", api_key])
     if api_secret:
         cli_args.extend(["--api-secret", api_secret])
-    if watch_flag in {"0", "false", "no"}:
-        cli_args.append("--no-watch")
 
-    wait_for_occupant = os.getenv("VOICE_AGENT_WAIT_FOR_OCCUPANT", "true").strip().lower() not in {
-        "",
-        "0",
-        "false",
-        "no",
-    }
-    if wait_for_occupant:
-        if not (url and api_key and api_secret):
-            print(
-                "[voice-agent] VOICE_AGENT_WAIT_FOR_OCCUPANT is enabled but LIVEKIT_URL/API_KEY/API_SECRET "
-                "are missing. Skipping occupancy check.",
-                file=sys.stderr,
-            )
-        else:
-            try:
-                _wait_for_room_participants(room, url, api_key, api_secret)
-            except Exception as exc:  # pragma: no cover - best effort guard
-                print(
-                    f"[voice-agent] Failed to wait for room occupants: {exc}. Continuing without guard.",
-                    file=sys.stderr,
-                )
-
+    if room:
+        print(
+            f"[voice-agent] Dispatch mode enabled. Waiting for AgentDispatch requests targeting room '{room}'.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "[voice-agent] Dispatch mode enabled. Waiting for AgentDispatch requests.",
+            file=sys.stderr,
+        )
     print(
-        f"[voice-agent] VOICE_AGENT_ROOM detected. Defaulting to `python main.py {' '.join(cli_args)}`.",
+        f"[voice-agent] Defaulting to `python main.py {' '.join(cli_args)}`.",
         file=sys.stderr,
     )
     sys.argv.extend(cli_args)
@@ -500,7 +644,7 @@ def _wait_for_room_participants(
                     )
                     participants = response.participants
                 except api.TwirpError as err:
-                    if err.code == api.TwirpErrorCode.not_found:
+                    if err.code == api.TwirpErrorCode.NOT_FOUND:
                         participants = []
                     else:
                         raise
