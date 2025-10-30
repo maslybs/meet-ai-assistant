@@ -12,7 +12,7 @@ jobs:
           set -e
           dest=/home/voice-ai-assistant
           if [ -d "$dest" ] && [ ! -d "$dest/.git" ]; then
-            rm -rf "$dest"
+            sudo rm -rf "$dest"
           fi
           if [ ! -d "$dest/.git" ]; then
             git clone --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$dest"
