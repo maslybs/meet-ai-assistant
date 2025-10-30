@@ -247,6 +247,32 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
         ) from _LIVEKIT_IMPORT_ERROR
 
     config = load_config()
+
+    job_metadata_raw = getattr(ctx.job, "metadata", "") or "{}"
+    try:
+        job_metadata: dict[str, Any] = json.loads(job_metadata_raw)
+    except json.JSONDecodeError:
+        job_metadata = {}
+
+    room_name = getattr(ctx.room, "name", "") or job_metadata.get("room") or ""
+    default_room = os.getenv("VOICE_AGENT_DEFAULT_ROOM", "").strip()
+
+    gemini_key_override = job_metadata.get("gemini_api_key")
+    use_env_key = bool(default_room and room_name == default_room)
+    gemini_api_key = _resolve_gemini_api_key()
+    if not use_env_key:
+        gemini_api_key = gemini_key_override or gemini_api_key
+
+    instructions_override = job_metadata.get("instructions")
+    model_override = job_metadata.get("model")
+    voice_override = job_metadata.get("voice")
+    temperature_override = job_metadata.get("temperature")
+
+    effective_instructions = instructions_override or config.instructions
+    effective_model = model_override or config.model
+    effective_voice = voice_override or config.voice
+    effective_temperature = float(temperature_override or config.temperature)
+
     video_sampler = _resolve_video_sampler()
     agent_session_kwargs: dict[str, Any] = {}
     if video_sampler is not None:
@@ -254,10 +280,10 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
 
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
-            model=config.model,
-            voice=config.voice,
-            temperature=config.temperature,
-            api_key=_resolve_gemini_api_key(),
+            model=effective_model,
+            voice=effective_voice,
+            temperature=effective_temperature,
+            api_key=gemini_api_key,
         ),
         user_away_timeout=None,
         **agent_session_kwargs,
@@ -280,6 +306,18 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
     room_io = getattr(session, "_room_io", None)
 
     if room_io is not None:
+        broadcast_default = os.getenv("VOICE_AGENT_MULTI_PARTICIPANT", "true").strip().lower()
+        broadcast_mode = broadcast_default not in {"", "0", "false", "no"}
+        if "multi_participant" in job_metadata:
+            broadcast_mode = bool(job_metadata.get("multi_participant"))
+
+        if broadcast_mode:
+            try:
+                room_io.set_participant(None)
+            except Exception as exc:
+                _VIDEO_LOGGER.warning("Failed to enable multi-participant mode: %s", exc)
+            else:
+                _VIDEO_LOGGER.info("RoomIO switched to broadcast mode; agent listening to all participants.")
 
         async def _wait_for_media_ready(identity: str, timeout: float = 10.0) -> None:
             """
@@ -399,7 +437,8 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             if not should_follow:
                 return
 
-            room_io.set_participant(identity)
+            if not broadcast_mode:
+                room_io.set_participant(identity)
 
             async def _initialize_participant() -> None:
                 try:
