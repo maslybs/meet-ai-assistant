@@ -24,7 +24,11 @@ The agent automatically joins whenever a participant connects, stays resident wh
    python -m pip install "livekit-agents[images]"   # required for video encoding
    ```
 
-3. **Autostart (optional)**  
+3. **Prompt management**  
+   - Edit `prompt.md` to adjust Hanna’s base persona in Ukrainian.  
+   - To override the prompt dynamically, set `VOICE_AGENT_PROMPT_FILE=/path/to/custom.md` or provide `VOICE_AGENT_INSTRUCTIONS` directly.
+
+4. **Autostart (optional)**  
    If you want to run the worker without passing CLI arguments, add `VOICE_AGENT_ROOM=<room-name>` to your `.env`.  
    When set, `python main.py` behaves like `python main.py connect --room <room-name>` using the credentials from `.env`.
 
@@ -53,6 +57,7 @@ For development or production deployments using `start`, `dev`, or LiveKit Cloud
 - **Adaptive frame rate**: video sampling employs `VoiceActivityVideoSampler`. Tune the cadence via:
   - `VOICE_AGENT_VIDEO_FPS_SPEAKING` (default `1.0` fps)
   - `VOICE_AGENT_VIDEO_FPS_SILENT` (default `0.3` fps)
+- **Automatic greeting**: whenever a participant joins, Hanna immediately introduces herself and offers assistance without mentioning personal limitations.
 
 Because video encoding uses Pillow, failure to install `livekit-agents[images]` (or at least `Pillow>=10`) will trigger runtime errors.
 
@@ -71,6 +76,7 @@ This makes the worker ideal for “always on” assistants: it runs once and wai
 ## Additional Configuration
 
 - `VOICE_AGENT_INSTRUCTIONS` – customise the system prompt (language, tone, persona).
+- By default the assistant introduces herself as **Hanna**, a polite Ukrainian-speaking helper who offers practical guidance. She never mentions physical abilities unprompted but will answer health-related questions delicately if the user explicitly asks.
 - `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE` – override model, voice, and creativity.
 - `VOICE_AGENT_WAIT_FOR_OCCUPANT`, `VOICE_AGENT_POLL_SECONDS`, `VOICE_AGENT_WAIT_TIMEOUT` – control the pre-join guard that prevents the agent from being the first participant.
 
@@ -85,6 +91,6 @@ Refer to the official documentation for advanced deployment options:
 
 1. Activate virtualenv → `source .venv/bin/activate`
 2. Install dependencies → `pip install -r requirements.txt && python -m pip install "livekit-agents[images]"`
-3. Populate `.env` with LiveKit/Gemini credentials and optional video settings
+3. Populate `.env` with LiveKit/Gemini credentials, prompt overrides (if any), and optional video settings
 4. Launch the worker → `python main.py`
 5. Join the target room from the client; the agent should greet you immediately, consuming audio and video in real time

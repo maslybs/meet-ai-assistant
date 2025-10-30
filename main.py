@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 
@@ -142,11 +143,7 @@ if function_tool is None:  # type: ignore[misc]
 class AgentConfig:
     """Configuration sourced from environment variables for the Gemini RealtimeModel."""
 
-    instructions: str = (
-        "You are a friendly Gemini-based voice and video assistant. Answer promptly, keep responses short, "
-        "and speak Ukrainian whenever possible. Якщо камера користувача активна, одразу використовуй відео "
-        "для кращої допомоги, але завжди пропонуй вимкнути відео на вимогу користувача."
-    )
+    instructions: str
     model: str = "gemini-1.5-pro"
     voice: str = "Charis"
     temperature: float = 0.8
@@ -208,12 +205,22 @@ class GeminiVisionAgent(Agent):
 
 
 def load_config() -> AgentConfig:
-    defaults = AgentConfig()
+    instructions = os.getenv("VOICE_AGENT_INSTRUCTIONS")
+
+    if not instructions:
+        prompt_path = Path(os.getenv("VOICE_AGENT_PROMPT_FILE", "prompt.md"))
+        try:
+            instructions = prompt_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Prompt file '{prompt_path}' is missing. Provide VOICE_AGENT_PROMPT_FILE or VOICE_AGENT_INSTRUCTIONS."
+            ) from exc
+
     return AgentConfig(
-        instructions=os.getenv("VOICE_AGENT_INSTRUCTIONS", defaults.instructions),
-        model=os.getenv("GEMINI_MODEL", defaults.model),
-        voice=os.getenv("GEMINI_TTS_VOICE", defaults.voice),
-        temperature=float(os.getenv("GEMINI_TEMPERATURE", defaults.temperature)),
+        instructions=instructions,
+        model=os.getenv("GEMINI_MODEL", "gemini-1.5-pro"),
+        voice=os.getenv("GEMINI_TTS_VOICE", "Charis"),
+        temperature=float(os.getenv("GEMINI_TEMPERATURE", 0.8)),
     )
 
 
@@ -277,6 +284,16 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             elif target_identity is None:
                 # default behaviour is to follow the first participant
                 room_io.set_participant(identity)
+
+            async def _greet() -> None:
+                try:
+                    await session.generate_reply(
+                        instructions="Привітай користувача, ввічливо назви себе Ганною та коротко запропонуй допомогу."
+                    )
+                except Exception as exc:  # pragma: no cover - best effort logging
+                    _VIDEO_LOGGER.warning("Failed to send greeting: %s", exc)
+
+            asyncio.create_task(_greet())
 
         def _handle_participant_disconnected(participant: Any) -> None:
             linked = room_io.linked_participant
