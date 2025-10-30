@@ -11,17 +11,19 @@ jobs:
         run: |
           set -e
           dest=/home/voice-ai-assistant
-          if [ -d "$dest" ] && [ ! -d "$dest/.git" ]; then
-            sudo rm -rf "$dest"
-          fi
-          if [ ! -d "$dest/.git" ]; then
+          mkdir -p "$dest"
+          if ! git -C "$dest" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            # Тека існує, але не git-репо: очистити вміст, не видаляючи саму теку
+            if [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
+              find "$dest" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} +
+            fi
             git clone --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$dest"
-          fi
-          cd "$dest"
-          git fetch --prune
-          git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
-          git reset --hard "$GITHUB_SHA"
-      - name: Install deps (Node)
+          else
+            cd "$dest"
+            git fetch --prune
+            git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
+            git reset --hard "$GITHUB_SHA"
+          fi      - name: Install deps (Node)
         if: hashFiles('package.json') != ''
         run: |
           cd /home/voice-ai-assistant
