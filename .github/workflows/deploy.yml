@@ -17,11 +17,10 @@ jobs:
           dest=/home/voice-ai-assistant
           mkdir -p "$dest"
           if ! git -C "$dest" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            git -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" \
-              clone --depth=1 "${GH_URL}/${GH_REPO}" "$dest"
+            git clone --depth=1 "https://x-access-token:${GITHUB_TOKEN}@${GH_URL#https://}/${GH_REPO}" "$dest"
           else
             cd "$dest"
-            git -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" fetch --prune
+            git -c "url.https://x-access-token:${GITHUB_TOKEN}@${GH_URL#https://}.insteadOf"="${GH_URL}" fetch --prune
             git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
             git reset --hard "$GITHUB_SHA"
           fi
