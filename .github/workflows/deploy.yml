@@ -1,40 +1,31 @@
 name: Deploy
-
 on:
   push:
     branches: [main]
-
 jobs:
-    deploy:
-      runs-on: [self-hosted, voice-ai]
-      steps:
-        - name: Checkout
-          uses: actions/checkout@v4
-
-        - name: Sync to working tree
-          run: |
-            set -e
-            dest=/home/voice-ai-assistant
-            if [ ! -d "$dest/.git" ]; then
-              git clone --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$dest"
-            fi
-            cd "$dest"
-            git fetch --prune
-            # Синхронізація з комітом пуша
-            git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
-            git reset --hard "$GITHUB_SHA"
-
-        - name: Install deps (Node)
-          if: hashFiles('package.json') != ''
-          run: |
-            cd /home/voice-ai-assistant
-            npm ci --omit=dev || npm install
-
-        - name: Project deploy script (optional)
-          run: |
-            cd /home/voice-ai-assistant
-            if [ -x ./deploy.sh ]; then ./deploy.sh; fi
-
-        - name: Restart service
-          run: |
-            sudo systemctl restart voice-ai.service
+  deploy:
+    runs-on: [self-hosted, voice-ai]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync to working tree
+        run: |
+          set -e
+          dest=/home/voice-ai-assistant
+          if [ ! -d "$dest/.git" ]; then
+            git clone --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$dest"
+          fi
+          cd "$dest"
+          git fetch --prune
+          git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
+          git reset --hard "$GITHUB_SHA"
+      - name: Install deps (Node)
+        if: hashFiles('package.json') != ''
+        run: |
+          cd /home/voice-ai-assistant
+          npm ci --omit=dev || npm install
+      - name: Project deploy script (optional)
+        run: |
+          cd /home/voice-ai-assistant
+          if [ -x ./deploy.sh ]; then ./deploy.sh; fi
+      - name: Restart service
+        run: sudo systemctl restart voice-ai.service
