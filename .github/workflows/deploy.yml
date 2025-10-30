@@ -17,7 +17,7 @@ jobs:
             if [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
               find "$dest" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} +
             fi
-            git clone --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$dest"
+            git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@${GITHUB_SERVER_URL#https://}/$GITHUB_REPOSITORY" "$dest"
           else
             cd "$dest"
             git fetch --prune
