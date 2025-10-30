@@ -330,7 +330,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
         async def _send_greeting(identity: str) -> bool:
             """
             Deliver the welcome message to the participant.
-            Retries once if the realtime backend is still spinning up.
+            Retries if the realtime backend is still spinning up.
             Returns True if the greeting was delivered.
             """
 
@@ -340,7 +340,8 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
                 try:
-                    await session.generate_reply(instructions=greeting_text)
+                    handle = session.say(greeting_text)
+                    await handle.wait_for_playout()
                     return True
                 except RealtimeError as exc:
                     backoff = 0.6 * attempt
