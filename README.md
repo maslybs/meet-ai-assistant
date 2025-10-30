@@ -10,10 +10,10 @@ The agent automatically joins whenever a participant connects, stays resident wh
 ## Prerequisites
 
 1. **Environment variables**  
-   Create a `.env` file based on `.env.example` and provide:
-   - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
-   - `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) with access to Gemini Realtime
-   - Optional overrides such as `VOICE_AGENT_INSTRUCTIONS`, `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE`
+   Create a `.env` file and provide:
+   - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `VOICE_AGENT_ROOM`
+   - `GEMINI_API_KEY` with access to Gemini Realtime
+   - Optional overrides such as  `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE`, `VOICE_AGENT_NAME`
 
 2. **Python environment**
    ```bash
@@ -26,7 +26,7 @@ The agent automatically joins whenever a participant connects, stays resident wh
 
 3. **Prompt management**  
    - Edit `prompt.md` to adjust Hanna’s base persona in Ukrainian.  
-   - To override the prompt dynamically, set `VOICE_AGENT_PROMPT_FILE=/path/to/custom.md` or provide `VOICE_AGENT_INSTRUCTIONS` directly.
+   - To override the prompt dynamically, set `VOICE_AGENT_PROMPT_FILE=/path/to/custom.md` or provide `VOICE_AGENT_INSTRUCTIONS` directly in env.
 
 4. **Autostart (optional)**  
    If you want to run the worker without passing CLI arguments, add `VOICE_AGENT_ROOM=<room-name>` to your `.env`.  

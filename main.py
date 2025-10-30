@@ -229,8 +229,8 @@ def load_config() -> AgentConfig:
     return AgentConfig(
         instructions=instructions,
         agent_name=os.getenv("VOICE_AGENT_NAME", "hanna-agent").strip() or "hanna-agent",
-        model=os.getenv("GEMINI_MODEL", "gemini-1.5-pro"),
-        voice=os.getenv("GEMINI_TTS_VOICE", "Charis"),
+        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-09-2025"),
+        voice=os.getenv("GEMINI_TTS_VOICE", ""),
         temperature=float(os.getenv("GEMINI_TEMPERATURE", 0.8)),
     )
 
