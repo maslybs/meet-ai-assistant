@@ -103,10 +103,24 @@ except ImportError:
         return
 
 try:
-    from livekit.agents import Agent, AgentSession, RoomOutputOptions, WorkerOptions, cli
+    from livekit.agents import (
+        Agent,
+        AgentSession,
+        RoomInputOptions,
+        RoomOutputOptions,
+        RunContext,
+        WorkerOptions,
+        cli,
+        voice,
+    )
+    from livekit.agents.llm import function_tool
     from livekit.plugins import google
 except ImportError as import_error:  # pragma: no cover - depends on local env
-    Agent = AgentSession = RoomOutputOptions = WorkerOptions = cli = google = None  # type: ignore[assignment]
+    Agent = (
+        AgentSession
+    ) = RoomInputOptions = RoomOutputOptions = RunContext = WorkerOptions = cli = voice = None  # type: ignore[assignment]
+    function_tool = None  # type: ignore[assignment]
+    google = None  # type: ignore[assignment]
     _LIVEKIT_IMPORT_ERROR: Optional[ImportError] = import_error
 else:
     _LIVEKIT_IMPORT_ERROR = None
@@ -116,18 +130,81 @@ if TYPE_CHECKING:
 else:  # pragma: no cover - runtime fallback
     LivekitJobContext = Any
 
+if RunContext is None:  # type: ignore[truthy-bool]
+    RunContext = Any  # type: ignore[assignment]
+
+if function_tool is None:  # type: ignore[misc]
+    def function_tool(func):  # type: ignore[no-redef]
+        return func
+
 
 @dataclass
 class AgentConfig:
     """Configuration sourced from environment variables for the Gemini RealtimeModel."""
 
     instructions: str = (
-        "You are a friendly Gemini-based voice assistant. Answer promptly, keep responses short, "
-        "and speak Ukrainian whenever possible."
+        "You are a friendly Gemini-based voice and video assistant. Answer promptly, keep responses short, "
+        "and speak Ukrainian whenever possible. Якщо камера користувача активна, одразу використовуй відео "
+        "для кращої допомоги, але завжди пропонуй вимкнути відео на вимогу користувача."
     )
     model: str = "gemini-1.5-pro"
     voice: str = "Charis"
     temperature: float = 0.8
+
+
+_VIDEO_LOGGER = logging.getLogger("voice-agent.video")
+
+
+class GeminiVisionAgent(Agent):
+    """
+    Custom agent that exposes tools for managing the room video feed.
+    Video is consumed automatically when available, while still giving the user
+    an explicit way to pause or resume it.
+    """
+
+    def __init__(self, *, instructions: str) -> None:
+        super().__init__(instructions=instructions)
+        self._video_toggle_lock = asyncio.Lock()
+
+    @function_tool
+    async def enable_video_feed(self, _: RunContext) -> str:
+        """
+        Увімкнути передачу відео з камери користувача, якщо її було вимкнено раніше.
+        """
+
+        async with self._video_toggle_lock:
+            session = self.session
+            if session is None:
+                return "Зараз не можу отримати відео, спробуйте пізніше."
+
+            video_stream = session.input.video
+            if video_stream is None:
+                return "Відео від учасника недоступне. Переконайтеся, що камера увімкнена."
+
+            if session.input.video_enabled:
+                return "Відео вже увімкнене."
+
+            session.input.set_video_enabled(True)
+            _VIDEO_LOGGER.info("Video feed enabled by request")
+            return "Добре, я бачу відео. Дайте знати, що саме потрібно показати."
+
+    @function_tool
+    async def disable_video_feed(self, _: RunContext) -> str:
+        """
+        Вимкнути захоплення відео, щоб зекономити ресурси або надати приватність на вимогу.
+        """
+
+        async with self._video_toggle_lock:
+            session = self.session
+            if session is None or session.input.video is None:
+                return "Зараз відеосигнал недоступний."
+
+            if not session.input.video_enabled:
+                return "Відео вже вимкнене."
+
+            session.input.set_video_enabled(False)
+            _VIDEO_LOGGER.info("Video feed disabled on request")
+            return "Вимкнула відео. Якщо знадобиться знову, просто скажіть."
 
 
 def load_config() -> AgentConfig:
@@ -152,6 +229,11 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
         ) from _LIVEKIT_IMPORT_ERROR
 
     config = load_config()
+    video_sampler = _resolve_video_sampler()
+    agent_session_kwargs: dict[str, Any] = {}
+    if video_sampler is not None:
+        agent_session_kwargs["video_sampler"] = video_sampler
+
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
             model=config.model,
@@ -159,15 +241,62 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             temperature=config.temperature,
             api_key=_resolve_gemini_api_key(),
         ),
+        user_away_timeout=None,
+        **agent_session_kwargs,
     )
 
-    agent = Agent(instructions=config.instructions)
+    _log_video_sampler_settings(video_sampler)
+    agent = GeminiVisionAgent(instructions=config.instructions)
 
     await session.start(
         agent=agent,
         room=ctx.room,
+        room_input_options=RoomInputOptions(
+            video_enabled=True,
+            close_on_disconnect=False,
+        ),
         room_output_options=RoomOutputOptions(transcription_enabled=True),
     )
+    _VIDEO_LOGGER.info("Session started; video capture enabled while user camera is active.")
+
+    room_io = getattr(session, "_room_io", None)
+
+    if room_io is not None:
+
+        def _handle_participant_connected(participant: Any) -> None:
+            linked = room_io.linked_participant
+            target_identity = getattr(room_io, "_participant_identity", None)
+            identity = getattr(participant, "identity", None)
+            if identity is None:
+                return
+
+            if linked is None:
+                room_io.set_participant(identity)
+            elif getattr(linked, "identity", None) == identity:
+                room_io.set_participant(identity)
+            elif target_identity is None:
+                # default behaviour is to follow the first participant
+                room_io.set_participant(identity)
+
+        def _handle_participant_disconnected(participant: Any) -> None:
+            linked = room_io.linked_participant
+            identity = getattr(participant, "identity", None)
+            if linked is None or identity is None:
+                return
+            if getattr(linked, "identity", None) == identity:
+                room_io.unset_participant()
+
+        ctx.room.on("participant_connected", _handle_participant_connected)
+        ctx.room.on("participant_disconnected", _handle_participant_disconnected)
+
+        for participant in ctx.room.remote_participants.values():
+            _handle_participant_connected(participant)
+
+        def _cleanup_callbacks() -> None:
+            ctx.room.off("participant_connected", _handle_participant_connected)
+            ctx.room.off("participant_disconnected", _handle_participant_disconnected)
+
+        ctx.add_shutdown_callback(_cleanup_callbacks)
 
 
 def _handle_missing_livekit(error: ImportError, config: AgentConfig) -> None:
@@ -279,6 +408,50 @@ def _resolve_gemini_api_key() -> Optional[str]:
     """
 
     return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _resolve_video_sampler() -> Optional[Any]:
+    """
+    Build a voice-activity-aware video sampler so we only forward frames when needed.
+    Allows overriding defaults via environment variables.
+    """
+
+    if voice is None:
+        return None
+
+    speaking_fps_raw = os.getenv("VOICE_AGENT_VIDEO_FPS_SPEAKING", "1.0")
+    silent_fps_raw = os.getenv("VOICE_AGENT_VIDEO_FPS_SILENT", "0.3")
+
+    try:
+        speaking_fps = max(0.0, float(speaking_fps_raw))
+        silent_fps = max(0.0, float(silent_fps_raw))
+    except ValueError:
+        _VIDEO_LOGGER.warning(
+            "Invalid VOICE_AGENT_VIDEO_FPS_* values (%s, %s); falling back to defaults.",
+            speaking_fps_raw,
+            silent_fps_raw,
+        )
+        speaking_fps, silent_fps = 1.0, 0.3
+
+    return voice.VoiceActivityVideoSampler(
+        speaking_fps=speaking_fps,
+        silent_fps=silent_fps,
+    )
+
+
+def _log_video_sampler_settings(sampler: Optional[Any]) -> None:
+    if sampler is None:
+        _VIDEO_LOGGER.info("Video sampler not configured (using SDK defaults).")
+        return
+
+    # VoiceActivityVideoSampler exposes attributes for the configured fps.
+    speaking = getattr(sampler, "speaking_fps", "unknown")
+    silent = getattr(sampler, "silent_fps", "unknown")
+    _VIDEO_LOGGER.info(
+        "Video sampler configured (speaking_fps=%s, silent_fps=%s).",
+        speaking,
+        silent,
+    )
 
 
 def _wait_for_room_participants(

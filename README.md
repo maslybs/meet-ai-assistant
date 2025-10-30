@@ -1,48 +1,90 @@
-# Gemini LiveKit Voice Agent
+# Gemini LiveKit Voice & Video Agent
 
-Цей проєкт розгортає LiveKit voice-agent, який використовує Google Gemini RealtimeModel для повного циклу real-time спілкування (розпізнавання, генерація, синтез). Код побудований на [LiveKit Agents](https://docs.livekit.io/agents/start/voice-ai/) і запускає `AgentSession` з RealtimeModel (`python main.py`).
+This project deploys a LiveKit worker that runs a Gemini Realtime multi‑modal agent.  
+It listens for room jobs, subscribes to the participant’s audio/video feeds, and replies in real time with speech synthesized responses.
 
-## Підготовка
+The agent automatically joins whenever a participant connects, stays resident when the room empties, and immediately resumes when the user returns. Video frames are always consumed when available, while the user can still ask the agent to pause or resume video processing.
 
-1. Створіть `.env`, базуючись на `.env.example`, і заповніть обовʼязкові поля:
+---
+
+## Prerequisites
+
+1. **Environment variables**  
+   Create a `.env` file based on `.env.example` and provide:
    - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
-   - `GEMINI_API_KEY` (ключ із доступом до Gemini Realtime, модель за замовчуванням `gemini-2.5-flash-native-audio-preview-09-2025`)
-   - За потреби, змініть інші налаштування голосу та моделі.
+   - `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) with access to Gemini Realtime
+   - Optional overrides such as `VOICE_AGENT_INSTRUCTIONS`, `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE`
 
-2. Встановіть залежності. У контейнері або локально виконайте:
-
+2. **Python environment**
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
    pip install --upgrade pip
    pip install -r requirements.txt
+   python -m pip install "livekit-agents[images]"   # required for video encoding
    ```
 
-   Якщо хочете запускати агента без передачі аргументів CLI,
-   додайте в `.env` змінну `VOICE_AGENT_ROOM=<ваша_кімната>`.
-   Так скрипт автоматично викличе `python main.py connect --room ...`
-   з параметрами `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
-   з вашого `.env`.
+3. **Autostart (optional)**  
+   If you want to run the worker without passing CLI arguments, add `VOICE_AGENT_ROOM=<room-name>` to your `.env`.  
+   When set, `python main.py` behaves like `python main.py connect --room <room-name>` using the credentials from `.env`.
 
-   За замовчуванням агент зачекає, поки в кімнаті зʼявиться хоч один
-   учасник, щоб не стати першим хостом. Поведінку можна налаштувати:
-   - `VOICE_AGENT_WAIT_FOR_OCCUPANT=false` — вимкнути очікування
-   - `VOICE_AGENT_POLL_SECONDS=2` — інтервал між перевірками
-   - `VOICE_AGENT_WAIT_TIMEOUT=120` — максимальний час очікування (0 — без меж)
+---
 
-## Запуск агента
-
-Запустіть worker:
+## Running the Worker
 
 ```bash
+source .venv/bin/activate
 python main.py
 ```
 
-LiveKit worker підʼєднається до вашого LiveKit-сервера, очікуватиме Job і опрацьовуватиме його за допомогою Gemini RealtimeModel. Worker автоматично підписується на аудіо доріжки, в режимі реального часу передає звук до моделі й повертає синтезовані відповіді.
+The worker:
+- waits for LiveKit jobs, connects to the room, and wires audio/video to the Gemini Realtime model;
+- keeps the session alive even when participants disconnect; once the same room receives a new participant, the agent automatically resumes listening and speaking;
+- refuses to become the first host unless `VOICE_AGENT_WAIT_FOR_OCCUPANT=false`.
 
-## Налаштування поведінки
+For development or production deployments using `start`, `dev`, or LiveKit Cloud agent dispatch, ensure the same environment variables are supplied.
 
-- `VOICE_AGENT_INSTRUCTIONS` — системні інструкції. Можна задати мову, стиль відповіді, тон.
-- `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE` — підібрані стандартно, але їх можна змінювати під потреби (інший голос, креативність моделі).
+---
 
-Якщо ви використовуєте LiveKit Cloud або scheduler, розгорніть worker відповідно до офіційної документації, передавши ці ж environment variables.
+## Video Behaviour
+
+- **Immediate video consumption**: when a participant’s camera is active, the agent streams video to Gemini without additional prompts.
+- **User controls**: the agent exposes tool calls `disable_video_feed` and `enable_video_feed`. A user instruction like “turn off video” pauses frame streaming; “turn video back on” resumes it.
+- **Adaptive frame rate**: video sampling employs `VoiceActivityVideoSampler`. Tune the cadence via:
+  - `VOICE_AGENT_VIDEO_FPS_SPEAKING` (default `1.0` fps)
+  - `VOICE_AGENT_VIDEO_FPS_SILENT` (default `0.3` fps)
+
+Because video encoding uses Pillow, failure to install `livekit-agents[images]` (or at least `Pillow>=10`) will trigger runtime errors.
+
+---
+
+## Continuous Availability
+
+- `RoomInputOptions(close_on_disconnect=False)` keeps the worker in the room after everybody leaves.
+- Custom participant event hooks reconnect RoomIO to the next arriving participant, restoring audio/video automatically.
+- `user_away_timeout=None` disables idle timeouts inside `AgentSession`, so the agent won’t shut down while waiting.
+
+This makes the worker ideal for “always on” assistants: it runs once and waits for occupants indefinitely. Charges for LiveKit/Gemini mainly accrue only while media streams or model tokens are exchanged.
+
+---
+
+## Additional Configuration
+
+- `VOICE_AGENT_INSTRUCTIONS` – customise the system prompt (language, tone, persona).
+- `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE` – override model, voice, and creativity.
+- `VOICE_AGENT_WAIT_FOR_OCCUPANT`, `VOICE_AGENT_POLL_SECONDS`, `VOICE_AGENT_WAIT_TIMEOUT` – control the pre-join guard that prevents the agent from being the first participant.
+
+Refer to the official documentation for advanced deployment options:
+- [LiveKit Agents](https://docs.livekit.io/agents/start/voice-ai/)
+- [Live Video & Vision](https://docs.livekit.io/agents/build/vision/)
+- [LiveKit Cloud/Dispatch setup](https://docs.livekit.io/cloud/overview/)
+
+---
+
+## Quick Checklist
+
+1. Activate virtualenv → `source .venv/bin/activate`
+2. Install dependencies → `pip install -r requirements.txt && python -m pip install "livekit-agents[images]"`
+3. Populate `.env` with LiveKit/Gemini credentials and optional video settings
+4. Launch the worker → `python main.py`
+5. Join the target room from the client; the agent should greet you immediately, consuming audio and video in real time
