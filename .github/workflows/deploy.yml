@@ -1,7 +1,7 @@
 name: Deploy
 on:
   push:
-    branches: [main]
+    branches: [master]
 jobs:
   deploy:
     runs-on: [self-hosted, voice-ai]
@@ -16,7 +16,7 @@ jobs:
           fi
           cd "$dest"
           git fetch --prune
-          git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
+          git checkout -f "$GITHUB_REF_NAME" || git checkout -f master
           git reset --hard "$GITHUB_SHA"
       - name: Install deps (Node)
         if: hashFiles('package.json') != ''
