@@ -330,38 +330,28 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
 
-            if broadcast:
-                subscribed = room_io.subscribed_fut
-                if subscribed is not None and not subscribed.done():
-                    try:
-                        await asyncio.wait_for(asyncio.shield(subscribed), timeout)
-                    except asyncio.TimeoutError:
-                        _VIDEO_LOGGER.warning(
-                            "Timed out waiting for LiveKit broadcast subscription"
-                        )
-                return
-
             while True:
                 linked = room_io.linked_participant
                 audio_input = room_io.audio_input
-                audio_ready = True
+                audio_ready = False
 
-                if audio_input is not None and lk_rtc is not None:
-                    source = getattr(audio_input, "publication_source", None)
-                    audio_ready = source not in {
-                        None,
-                        lk_rtc.TrackSource.SOURCE_UNKNOWN,
-                    }
+                if audio_input is not None:
+                    audio_ready = True
+                    if lk_rtc is not None:
+                        source = getattr(audio_input, "publication_source", None)
+                        if source in {None, lk_rtc.TrackSource.SOURCE_UNKNOWN}:
+                            audio_ready = False
 
                 if broadcast:
                     if audio_ready:
                         break
-                elif (
-                    linked is not None
-                    and getattr(linked, "identity", None) == identity
-                    and audio_ready
-                ):
-                    break
+                else:
+                    if (
+                        linked is not None
+                        and getattr(linked, "identity", None) == identity
+                        and audio_ready
+                    ):
+                        break
 
                 if loop.time() > deadline:
                     raise TimeoutError(
