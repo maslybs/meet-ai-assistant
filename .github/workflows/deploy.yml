@@ -15,15 +15,17 @@ jobs:
         run: |
           set -e
           dest=/home/voice-ai-assistant
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@${GH_URL#https://}/${GH_REPO}"
           mkdir -p "$dest"
           if ! git -C "$dest" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            git clone --depth=1 "https://x-access-token:${GITHUB_TOKEN}@${GH_URL#https://}/${GH_REPO}" "$dest"
-          else
-            cd "$dest"
-            git -c "url.https://x-access-token:${GITHUB_TOKEN}@${GH_URL#https://}.insteadOf"="${GH_URL}" fetch --prune
-            git checkout -f "$GITHUB_REF_NAME" || git checkout -f main
-            git reset --hard "$GITHUB_SHA"
+            git -C "$dest" init
+            git -C "$dest" remote add origin "$repo_url"
           fi
+          git -C "$dest" remote set-url origin "$repo_url"
+          git -C "$dest" -c "url.$repo_url.insteadOf"="${GH_URL}" fetch --prune origin
+          git -C "$dest" fetch origin "$GITHUB_SHA"
+          git -C "$dest" checkout -f "$GITHUB_REF_NAME" || git -C "$dest" checkout -f main
+          git -C "$dest" reset --hard "$GITHUB_SHA"
       - name: Install deps (Node)
         if: hashFiles('package.json') != ''
         run: |
