@@ -330,6 +330,17 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
 
+            if broadcast:
+                subscribed = room_io.subscribed_fut
+                if subscribed is not None and not subscribed.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(subscribed), timeout)
+                    except asyncio.TimeoutError:
+                        _VIDEO_LOGGER.warning(
+                            "Timed out waiting for LiveKit broadcast subscription"
+                        )
+                return
+
             while True:
                 linked = room_io.linked_participant
                 audio_input = room_io.audio_input
@@ -447,6 +458,12 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                 room_io.set_participant(identity)
 
             async def _initialize_participant() -> None:
+                try:
+                    if not session.input.audio_enabled:
+                        session.input.set_audio_enabled(True)
+                except Exception as exc:  # pragma: no cover - defensive
+                    _VIDEO_LOGGER.debug("Failed to ensure audio input enabled before wait: %s", exc)
+
                 try:
                     await _wait_for_media_ready(identity, broadcast=broadcast_mode)
                 except TimeoutError as exc:
