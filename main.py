@@ -266,12 +266,13 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
 
     instructions_override = job_metadata.get("instructions")
     model_override = job_metadata.get("model")
-    voice_override = job_metadata.get("voice")
+    voice_override_raw = job_metadata.get("voice")
+    voice_override = voice_override_raw.strip() if isinstance(voice_override_raw, str) else None
     temperature_override = job_metadata.get("temperature")
 
-    effective_instructions = instructions_override or config.instructions
-    effective_model = model_override or config.model
-    effective_voice = voice_override or config.voice
+    effective_instructions = (instructions_override or config.instructions).strip() or config.instructions
+    effective_model = (model_override or config.model).strip() or config.model
+    effective_voice = (voice_override or config.voice).strip() or _resolve_voice_override()
     effective_temperature = float(temperature_override or config.temperature)
 
     video_sampler = _resolve_video_sampler()
