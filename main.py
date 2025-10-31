@@ -380,7 +380,12 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
                 try:
-                    handle = session.say(greeting_text)
+                    # Use generate_reply instead of session.say because realtime models
+                    # require the TTS-enabled reply pipeline (see LiveKit docs).
+                    handle = session.generate_reply(
+                        instructions=greeting_text,
+                        allow_interruptions=False,
+                    )
                     await handle.wait_for_playout()
                     return True
                 except RealtimeError as exc:
