@@ -321,7 +321,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             else:
                 _VIDEO_LOGGER.info("RoomIO switched to broadcast mode; agent listening to all participants.")
 
-        async def _wait_for_media_ready(identity: str, timeout: float = 10.0) -> None:
+        async def _wait_for_media_ready(identity: str, timeout: float = 10.0, *, broadcast: bool) -> None:
             """
             Wait until RoomIO links to the participant and the media pipelines are live.
             This avoids greeting the user before audio input/output are ready.
@@ -342,7 +342,10 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                         lk_rtc.TrackSource.SOURCE_UNKNOWN,
                     }
 
-                if (
+                if broadcast:
+                    if audio_ready:
+                        break
+                elif (
                     linked is not None
                     and getattr(linked, "identity", None) == identity
                     and audio_ready
@@ -445,7 +448,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
 
             async def _initialize_participant() -> None:
                 try:
-                    await _wait_for_media_ready(identity)
+                    await _wait_for_media_ready(identity, broadcast=broadcast_mode)
                 except TimeoutError as exc:
                     _VIDEO_LOGGER.warning("Media for %s not ready: %s", identity, exc)
                 except Exception as exc:  # pragma: no cover - best effort logging
