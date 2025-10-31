@@ -382,10 +382,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                 try:
                     # Use generate_reply instead of session.say because realtime models
                     # require the TTS-enabled reply pipeline (see LiveKit docs).
-                    handle = session.generate_reply(
-                        instructions=greeting_text,
-                        allow_interruptions=False,
-                    )
+                    handle = session.generate_reply(instructions=greeting_text)
                     await handle.wait_for_playout()
                     return True
                 except RealtimeError as exc:
