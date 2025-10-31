@@ -333,13 +333,13 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
             while True:
                 linked = room_io.linked_participant
                 audio_input = room_io.audio_input
-                audio_ready = False
 
+                audio_ready = audio_input is not None
                 if audio_input is not None:
                     audio_ready = True
                     if lk_rtc is not None:
                         source = getattr(audio_input, "publication_source", None)
-                        if source in {None, lk_rtc.TrackSource.SOURCE_UNKNOWN}:
+                        if source is None:
                             audio_ready = False
 
                 if broadcast:
