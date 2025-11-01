@@ -299,7 +299,6 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
         room=ctx.room,
         room_input_options=RoomInputOptions(
             video_enabled=True,
-            participant_identity=config.agent_name,
             close_on_disconnect=False,
         ),
         room_output_options=RoomOutputOptions(transcription_enabled=True),
