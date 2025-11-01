@@ -382,10 +382,13 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                 "Привітай користувача, ввічливо назви себе Ганною та коротко запропонуй допомогу."
             )
             max_attempts = 3
+            fallback_used = False
             for attempt in range(1, max_attempts + 1):
                 try:
-                    # Використовуємо user_input, щоб запустити повноцінне мовлення Realtime моделі.
-                    handle = session.generate_reply(user_input=greeting_text)
+                    if fallback_used:
+                        handle = session.say(greeting_text)
+                    else:
+                        handle = session.generate_reply(user_input=greeting_text)
                     await handle.wait_for_playout()
                     return True
                 except RealtimeError as exc:
@@ -397,6 +400,9 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                         exc,
                         backoff if attempt < max_attempts else 0.0,
                     )
+                    if attempt == max_attempts - 1 and not fallback_used:
+                        fallback_used = True
+                        continue
                     if attempt >= max_attempts:
                         return False
                     await asyncio.sleep(backoff)
