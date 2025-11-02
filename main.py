@@ -98,6 +98,103 @@ def _patch_livekit_room_event() -> None:
 _patch_livekit_room_event()
 
 
+def _patch_google_realtime_autostart() -> None:
+    """
+    Gemini sometimes streams LiveServerContent before emitting a generation_created event.
+    Ensure the LiveKit Google realtime session always starts a generation so the agent
+    does not get stuck waiting for a response.
+    """
+
+    try:
+        from livekit.plugins.google.realtime import realtime_api  # type: ignore
+    except ImportError:  # pragma: no cover - plugin not available locally
+        return
+
+    original = getattr(realtime_api.RealtimeSession, "_handle_server_content", None)
+    if original is None:
+        return
+    if getattr(realtime_api.RealtimeSession, "_voice_agent_patched", False):
+        return
+
+    def _has_content(server_content: Any) -> bool:
+        model_turn = getattr(server_content, "model_turn", None)
+        if model_turn and getattr(model_turn, "parts", None):
+            for part in model_turn.parts:
+                if getattr(part, "text", None):
+                    return True
+                inline = getattr(part, "inline_data", None)
+                if inline and getattr(inline, "data", None):
+                    return True
+        output_transcription = getattr(server_content, "output_transcription", None)
+        if output_transcription and getattr(output_transcription, "text", None):
+            return True
+        input_transcription = getattr(server_content, "input_transcription", None)
+        if input_transcription and getattr(input_transcription, "text", None):
+            return True
+        return False
+
+    logger = logging.getLogger("voice-agent.gemini")
+
+    def _patched(self, server_content):  # type: ignore[no-untyped-def]
+        try:
+            needs_generation = (
+                getattr(self, "_current_generation", None) is None
+                or getattr(getattr(self, "_current_generation", None), "_done", False)
+            )
+            if needs_generation:
+                try:
+                    setattr(self, "_current_generation_event", None)
+                    self._start_new_generation()  # type: ignore[attr-defined]
+                    if _has_content(server_content):
+                        logger.debug("Gemini autostart: primed generation before server content.")
+                except Exception as exc:  # pragma: no cover - best effort guard
+                    logger.warning("Failed to auto-start Gemini generation: %s", exc)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Gemini realtime autostart probe failed; continuing with original handler.")
+
+        result = original(self, server_content)
+
+        try:
+            pending = getattr(self, "_pending_generation_fut", None)
+            current = getattr(self, "_current_generation", None)
+            if (
+                pending is not None
+                and not pending.done()
+                and current is not None
+                and getattr(current, "message_ch", None) is not None
+            ):
+                if _has_content(server_content):
+                    logger.debug("Gemini autostart: resolving pending generation after content.")
+                    try:
+                        response_id = getattr(current, "response_id", None) or "GR_FALLBACK"
+                        setattr(current, "response_id", response_id)
+                        event = getattr(self, "_current_generation_event", None)
+                        if event is None:
+                            from livekit.agents import llm as _llm  # type: ignore
+
+                            event = _llm.GenerationCreatedEvent(
+                                message_stream=current.message_ch,
+                                function_stream=current.function_ch,
+                                user_initiated=True,
+                                response_id=response_id,
+                            )
+                            setattr(self, "_current_generation_event", event)
+                        pending.set_result(event)
+                        setattr(self, "_pending_generation_fut", None)
+                    except Exception as exc:  # pragma: no cover
+                        logger.warning("Gemini autostart fallback failed: %s", exc)
+        except Exception:  # pragma: no cover
+            logger.debug("Gemini autostart post-hook failed.")
+
+        return result
+
+    realtime_api.RealtimeSession._handle_server_content = _patched  # type: ignore[assignment]
+    realtime_api.RealtimeSession._voice_agent_patched = True  # type: ignore[attr-defined]
+
+
+_patch_google_realtime_autostart()
+
+
 def _is_truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
