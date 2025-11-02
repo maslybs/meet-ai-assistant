@@ -271,11 +271,26 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
     except json.JSONDecodeError:
         job_metadata = {}
 
-    room_name = getattr(ctx.room, "name", "") or job_metadata.get("room") or ""
+    def _normalize_room_name(value: Any) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    room_name = _normalize_room_name(getattr(ctx.room, "name", ""))
+    if not room_name:
+        room_name = _normalize_room_name(job_metadata.get("room"))
+    if not room_name:
+        room_name = _normalize_room_name(job_metadata.get("roomName"))
+
     default_room = os.getenv("VOICE_AGENT_DEFAULT_ROOM", "").strip()
+    demo_room = os.getenv("VOICE_AGENT_DEMO_ROOM", "").strip()
+    env_managed_rooms = {
+        value.casefold()
+        for value in (default_room, demo_room)
+        if isinstance(value, str) and value.strip()
+    }
+    normalized_room = room_name.casefold() if room_name else ""
 
     gemini_key_override = job_metadata.get("gemini_api_key")
-    use_env_key = bool(default_room and room_name == default_room)
+    use_env_key = bool(normalized_room and normalized_room in env_managed_rooms)
     gemini_api_key = _resolve_gemini_api_key()
     if not use_env_key:
         gemini_api_key = gemini_key_override or gemini_api_key
