@@ -14,6 +14,7 @@ The agent automatically joins whenever a participant connects, stays resident wh
    - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `VOICE_AGENT_ROOM`
    - `GEMINI_API_KEY` with access to Gemini Realtime
    - Optional overrides such as  `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE`, `VOICE_AGENT_NAME`
+   - To let Gemini use Google Search, set `GEMINI_ENABLE_SEARCH=true` (or override per job metadata with `enable_search`)
 
 2. **Python environment**
    ```bash
@@ -78,6 +79,7 @@ This makes the worker ideal for “always on” assistants: it runs once and wai
 - `VOICE_AGENT_INSTRUCTIONS` – customise the system prompt (language, tone, persona).
 - By default the assistant introduces herself as **Hanna**, a polite Ukrainian-speaking helper who offers practical guidance. She never mentions physical abilities unprompted but will answer health-related questions delicately if the user explicitly asks.
 - `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE` – override model, voice, and creativity.
+- `GEMINI_ENABLE_SEARCH` – enable the experimental Gemini Google Search tool. Supported overrides: job metadata can pass `enable_search: true` to toggle it per room/session.
 - `VOICE_AGENT_WAIT_FOR_OCCUPANT`, `VOICE_AGENT_POLL_SECONDS`, `VOICE_AGENT_WAIT_TIMEOUT` – control the pre-join guard that prevents the agent from being the first participant.
 
 Refer to the official documentation for advanced deployment options:

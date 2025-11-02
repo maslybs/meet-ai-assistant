@@ -97,6 +97,17 @@ def _patch_livekit_room_event() -> None:
 
 _patch_livekit_room_event()
 
+
+def _is_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -158,9 +169,11 @@ class AgentConfig:
     model: str = "gemini-1.5-pro"
     voice: str = "Charis"
     temperature: float = 0.8
+    enable_search: bool = False
 
 
 _VIDEO_LOGGER = logging.getLogger("voice-agent.video")
+_GEMINI_LOGGER = logging.getLogger("voice-agent.gemini")
 
 
 class GeminiVisionAgent(Agent):
@@ -227,12 +240,15 @@ def load_config() -> AgentConfig:
                 f"Prompt file '{prompt_path}' is missing. Provide VOICE_AGENT_PROMPT_FILE or VOICE_AGENT_INSTRUCTIONS."
             ) from exc
 
+    search_flag = os.getenv("GEMINI_ENABLE_SEARCH")
+
     return AgentConfig(
         instructions=instructions,
         agent_name=os.getenv("VOICE_AGENT_NAME", "hanna-agent").strip() or "hanna-agent",
         model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-09-2025"),
         voice=os.getenv("GEMINI_TTS_VOICE", ""),
         temperature=float(os.getenv("GEMINI_TEMPERATURE", 0.8)),
+        enable_search=_is_truthy(search_flag) if search_flag is not None else False,
     )
 
 
@@ -269,23 +285,36 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
     voice_override_raw = job_metadata.get("voice")
     voice_override = voice_override_raw.strip() if isinstance(voice_override_raw, str) else None
     temperature_override = job_metadata.get("temperature")
+    search_override_raw = job_metadata.get("enable_search")
+    if search_override_raw is None:
+        search_override_raw = job_metadata.get("search_enabled")
 
     effective_instructions = (instructions_override or config.instructions).strip() or config.instructions
     effective_model = (model_override or config.model).strip() or config.model
     effective_voice = (voice_override or config.voice).strip() or _resolve_voice_override()
     effective_temperature = float(temperature_override or config.temperature)
+    effective_search_enabled = config.enable_search
+    if search_override_raw is not None:
+        effective_search_enabled = _is_truthy(search_override_raw)
 
     video_sampler = _resolve_video_sampler()
     agent_session_kwargs: dict[str, Any] = {}
     if video_sampler is not None:
         agent_session_kwargs["video_sampler"] = video_sampler
+    gemini_tools = _resolve_gemini_tools(enable_search=effective_search_enabled)
+    llm_kwargs: dict[str, Any] = {
+        "model": effective_model,
+        "voice": effective_voice,
+        "temperature": effective_temperature,
+        "api_key": gemini_api_key,
+    }
+    if gemini_tools:
+        llm_kwargs["_gemini_tools"] = gemini_tools
+        _GEMINI_LOGGER.info("Google Search tool enabled for Gemini Realtime session.")
 
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
-            model=effective_model,
-            voice=effective_voice,
-            temperature=effective_temperature,
-            api_key=gemini_api_key,
+            **llm_kwargs,
         ),
         user_away_timeout=None,
         **agent_session_kwargs,
@@ -659,6 +688,31 @@ def _resolve_gemini_api_key() -> Optional[str]:
     """
 
     return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _resolve_gemini_tools(*, enable_search: bool) -> list[Any]:
+    if not enable_search:
+        return []
+
+    if google is None:
+        _GEMINI_LOGGER.warning(
+            "Gemini search requested but livekit.plugins.google is unavailable; skipping tool setup.",
+        )
+        return []
+
+    try:
+        from google.genai import types as google_types
+    except ImportError as exc:
+        _GEMINI_LOGGER.warning(
+            "Gemini search requested but google.genai.types is missing: %s", exc
+        )
+        return []
+
+    try:
+        return [google_types.GoogleSearch()]
+    except Exception as exc:  # pragma: no cover - defensive guard
+        _GEMINI_LOGGER.warning("Failed to configure Gemini Google Search tool: %s", exc)
+        return []
 
 
 def _resolve_video_sampler() -> Optional[Any]:
