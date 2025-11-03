@@ -511,6 +511,8 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                     )
 
         greeted_identities: set[str] = set()
+        inflight_initializations: set[str] = set()
+        participant_poll_task: Optional[asyncio.Task[Any]] = None
 
         async def _send_greeting(identity: str) -> bool:
             """
@@ -617,9 +619,12 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                 if identity in greeted_identities:
                     return
 
+                inflight_initializations.add(identity)
+
                 greeted = await _send_greeting(identity)
                 if greeted:
                     greeted_identities.add(identity)
+                inflight_initializations.discard(identity)
 
             asyncio.create_task(_initialize_participant())
 
@@ -629,6 +634,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
                 return
 
             greeted_identities.discard(identity)
+            inflight_initializations.discard(identity)
             linked = room_io.linked_participant
             if linked is None:
                 return
@@ -645,8 +651,36 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
         async def _cleanup_callbacks() -> None:
             ctx.room.off("participant_connected", _handle_participant_connected)
             ctx.room.off("participant_disconnected", _handle_participant_disconnected)
+            if participant_poll_task:
+                participant_poll_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await participant_poll_task
 
         ctx.add_shutdown_callback(_cleanup_callbacks)
+
+        async def _poll_remote_participants(interval: float = 5.0) -> None:
+            """
+            Periodically reconcile remote participants to guard against missed events.
+            """
+
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    participants_snapshot = list(ctx.room.remote_participants.values())
+                    for participant in participants_snapshot:
+                        identity = getattr(participant, "identity", None)
+                        if not identity or identity in greeted_identities or identity in inflight_initializations:
+                            continue
+                        _handle_participant_connected(participant)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive logging
+                _VIDEO_LOGGER.debug("Remote participant poll failed: %s", exc)
+                await asyncio.sleep(interval)
+
+        participant_poll_task = asyncio.create_task(
+            _poll_remote_participants(), name="voice-agent.participant-poll"
+        )
 
 
 def _handle_missing_livekit(error: ImportError, config: AgentConfig) -> None:
