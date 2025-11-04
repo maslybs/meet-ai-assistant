@@ -450,7 +450,7 @@ async def entrypoint(ctx: "LivekitJobContext") -> None:
     room_io = getattr(session, "_room_io", None)
 
     if room_io is not None:
-        broadcast_default = os.getenv("VOICE_AGENT_MULTI_PARTICIPANT", "true").strip().lower()
+        broadcast_default = os.getenv("VOICE_AGENT_MULTI_PARTICIPANT", "false").strip().lower()
         broadcast_mode = broadcast_default not in {"", "0", "false", "no"}
         if "multi_participant" in job_metadata:
             broadcast_mode = bool(job_metadata.get("multi_participant"))
