@@ -52,7 +52,7 @@ def load_config() -> AgentConfig:
 
     return AgentConfig(
         instructions=instructions,
-        agent_name=os.getenv("VOICE_AGENT_NAME", "hanna-agent").strip() or "hanna-agent",
+        agent_name=os.getenv("VOICE_AGENT_NAME", "Hanna").strip() or "Hanna",
         model=os.getenv(
             "GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-09-2025"
         ),
