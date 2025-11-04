@@ -22,7 +22,7 @@ The agent automatically joins whenever a participant connects, stays resident wh
    source .venv/bin/activate
    pip install --upgrade pip
    pip install -r requirements.txt
-   python -m pip install "livekit-agents[images]"   # required for video encoding
+   python -m pip install "livekit-agents[images]"   # для відео-енкодингу
    ```
 
 3. **Prompt management**  
@@ -41,6 +41,8 @@ The agent automatically joins whenever a participant connects, stays resident wh
 source .venv/bin/activate
 python main.py
 ```
+
+Працюй з кореня репозиторію, де розміщені `prompt.md` та `.env`. Якщо `.venv` ще не створено, виконай кроки з розділу «Python environment» перед запуском.
 
 The worker:
 - waits for LiveKit jobs, connects to the room, and wires audio/video to the Gemini Realtime model;
