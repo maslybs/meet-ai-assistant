@@ -83,6 +83,19 @@ def _resolve_room_empty_delay(job_metadata: dict[str, Any]) -> float:
         return 3.0
 
 
+def _resolve_greeting_delay(job_metadata: dict[str, Any]) -> float:
+    delay_raw = os.getenv("VOICE_AGENT_GREETING_DELAY", "0.5")
+    if "greeting_delay" in job_metadata:
+        delay_raw = str(job_metadata.get("greeting_delay"))
+    try:
+        return max(0.0, float(delay_raw))
+    except (TypeError, ValueError):
+        _VIDEO_LOGGER.warning(
+            "Invalid greeting delay value '%s'; defaulting to 0.5 seconds.", delay_raw
+        )
+        return 0.5
+
+
 def _create_participant_greeter(
     ctx: Any,
     session_artifacts: SessionArtifacts,
@@ -91,6 +104,7 @@ def _create_participant_greeter(
     terminate_on_empty: bool,
     close_room_on_empty: bool,
     shutdown_delay: float,
+    greeting_delay: float,
 ) -> Optional[ParticipantGreeter]:
     room_io = getattr(session_artifacts.session, "_room_io", None)
     if room_io is None:
@@ -119,6 +133,7 @@ def _create_participant_greeter(
         terminate_on_empty=terminate_on_empty,
         close_room_on_empty=close_room_on_empty,
         shutdown_delay=shutdown_delay,
+        greeting_delay=greeting_delay,
     )
     greeter.attach()
     return greeter
@@ -163,6 +178,7 @@ async def run_job(ctx: Any) -> None:
     terminate_on_empty = _should_terminate_on_empty(job_metadata)
     close_room_on_empty = _should_close_room_on_empty(job_metadata)
     shutdown_delay = _resolve_room_empty_delay(job_metadata)
+    greeting_delay = _resolve_greeting_delay(job_metadata)
 
     async def _stop_session(_: str) -> None:
         await session_artifacts.session.aclose()
@@ -176,6 +192,7 @@ async def run_job(ctx: Any) -> None:
         terminate_on_empty=terminate_on_empty,
         close_room_on_empty=close_room_on_empty,
         shutdown_delay=shutdown_delay,
+        greeting_delay=greeting_delay,
     )
 
 

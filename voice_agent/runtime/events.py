@@ -43,6 +43,7 @@ class ParticipantGreeter:
         terminate_on_empty: bool,
         close_room_on_empty: bool,
         shutdown_delay: float,
+        greeting_delay: float,
     ) -> None:
         self._ctx = ctx
         self._session = session
@@ -52,6 +53,7 @@ class ParticipantGreeter:
         self._terminate_on_empty = terminate_on_empty
         self._close_room_on_empty = close_room_on_empty
         self._shutdown_delay = max(0.0, shutdown_delay)
+        self._greeting_delay = max(0.0, greeting_delay)
         self._greeted_identities: set[str] = set()
         self._inflight_initializations: set[str] = set()
         self._participant_poll_task: Optional[asyncio.Task[Any]] = None
@@ -167,10 +169,13 @@ class ParticipantGreeter:
 
         try:
             await self._wait_for_media_ready(identity, broadcast=self._broadcast_mode)
+            media_ready = True
         except TimeoutError as exc:
             _VIDEO_LOGGER.warning("Media for %s not ready: %s", identity, exc)
+            media_ready = False
         except Exception as exc:  # pragma: no cover - best effort logging
             _VIDEO_LOGGER.warning("Unexpected media wait failure for %s: %s", identity, exc)
+            media_ready = False
         else:
             await asyncio.sleep(0)
 
@@ -185,6 +190,13 @@ class ParticipantGreeter:
 
         self._inflight_initializations.add(identity)
 
+        if self._greeting_delay:
+            await asyncio.sleep(self._greeting_delay)
+
+        if not media_ready:
+            _VIDEO_LOGGER.debug(
+                "Greeting %s without confirmed media readiness.", identity
+            )
         greeted = await self._send_greeting(identity)
         if greeted:
             self._greeted_identities.add(identity)
