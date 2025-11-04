@@ -4,7 +4,7 @@ import os
 from typing import Any, Optional
 
 from ..agent import GeminiVisionAgent, LIVEKIT_IMPORT_ERROR
-from ..config import AgentConfig, load_config
+from ..config import AgentConfig, load_config, _is_truthy
 from ..compat import bootstrap as bootstrap_compat
 from .events import ParticipantGreeter
 from .session import (
@@ -54,11 +54,34 @@ def _resolve_broadcast_mode(job_metadata: dict[str, Any]) -> bool:
     return broadcast_mode
 
 
+def _should_terminate_on_empty(job_metadata: dict[str, Any]) -> bool:
+    terminate_default = os.getenv("VOICE_AGENT_TERMINATE_ON_EMPTY", "true")
+    terminate = _is_truthy(terminate_default)
+    if "terminate_on_empty" in job_metadata:
+        terminate = _is_truthy(job_metadata.get("terminate_on_empty"))
+    return terminate
+
+
+def _resolve_room_empty_delay(job_metadata: dict[str, Any]) -> float:
+    delay_raw = os.getenv("VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY", "3.0")
+    if "room_empty_shutdown_delay" in job_metadata:
+        delay_raw = str(job_metadata.get("room_empty_shutdown_delay"))
+    try:
+        return max(0.0, float(delay_raw))
+    except (TypeError, ValueError):
+        _VIDEO_LOGGER.warning(
+            "Invalid shutdown delay value '%s'; defaulting to 3.0 seconds.", delay_raw
+        )
+        return 3.0
+
+
 def _create_participant_greeter(
     ctx: Any,
     session_artifacts: SessionArtifacts,
     *,
     broadcast_mode: bool,
+    terminate_on_empty: bool,
+    shutdown_delay: float,
 ) -> Optional[ParticipantGreeter]:
     room_io = getattr(session_artifacts.session, "_room_io", None)
     if room_io is None:
@@ -84,6 +107,8 @@ def _create_participant_greeter(
         room_io=room_io,
         broadcast_mode=broadcast_mode,
         greeting_text=greeting_text,
+        terminate_on_empty=terminate_on_empty,
+        shutdown_delay=shutdown_delay,
     )
     greeter.attach()
     return greeter
@@ -125,12 +150,21 @@ async def run_job(ctx: Any) -> None:
     )
 
     broadcast_mode = _resolve_broadcast_mode(job_metadata)
+    terminate_on_empty = _should_terminate_on_empty(job_metadata)
+    shutdown_delay = _resolve_room_empty_delay(job_metadata)
+
+    async def _stop_session(_: str) -> None:
+        await session_artifacts.session.stop()
+
+    ctx.add_shutdown_callback(_stop_session)
+
     _create_participant_greeter(
         ctx,
         session_artifacts,
         broadcast_mode=broadcast_mode,
+        terminate_on_empty=terminate_on_empty,
+        shutdown_delay=shutdown_delay,
     )
 
 
 __all__ = ["run_job"]
-

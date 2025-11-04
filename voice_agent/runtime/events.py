@@ -35,15 +35,20 @@ class ParticipantGreeter:
         room_io: Any,
         broadcast_mode: bool,
         greeting_text: str,
+        terminate_on_empty: bool,
+        shutdown_delay: float,
     ) -> None:
         self._ctx = ctx
         self._session = session
         self._room_io = room_io
         self._broadcast_mode = broadcast_mode
         self._greeting_text = greeting_text
+        self._terminate_on_empty = terminate_on_empty
+        self._shutdown_delay = max(0.0, shutdown_delay)
         self._greeted_identities: set[str] = set()
         self._inflight_initializations: set[str] = set()
         self._participant_poll_task: Optional[asyncio.Task[Any]] = None
+        self._shutdown_task: Optional[asyncio.Task[None]] = None
 
     def attach(self) -> None:
         room = self._ctx.room
@@ -66,6 +71,11 @@ class ParticipantGreeter:
             self._participant_poll_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._participant_poll_task
+        if self._shutdown_task:
+            self._shutdown_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._shutdown_task
+            self._shutdown_task = None
 
     async def _poll_remote_participants(self, interval: float = 5.0) -> None:
         """
@@ -92,6 +102,10 @@ class ParticipantGreeter:
             await asyncio.sleep(interval)
 
     def _handle_participant_connected(self, participant: Any) -> None:
+        if self._shutdown_task:
+            self._shutdown_task.cancel()
+            self._shutdown_task = None
+
         identity = getattr(participant, "identity", None)
         if identity is None:
             return
@@ -272,6 +286,42 @@ class ParticipantGreeter:
         if getattr(linked, "identity", None) == identity:
             self._room_io.unset_participant()
 
+        self._maybe_schedule_shutdown()
+
+    def _maybe_schedule_shutdown(self) -> None:
+        if not self._terminate_on_empty:
+            return
+
+        connected_participants = [
+            participant
+            for participant in self._ctx.room.remote_participants.values()
+            if getattr(participant, "is_connected", True)
+        ]
+        if connected_participants:
+            return
+
+        if self._shutdown_task is not None:
+            return
+
+        async def _shutdown() -> None:
+            try:
+                if self._shutdown_delay:
+                    await asyncio.sleep(self._shutdown_delay)
+                remaining = [
+                    participant
+                    for participant in self._ctx.room.remote_participants.values()
+                    if getattr(participant, "is_connected", True)
+                ]
+                if remaining:
+                    return
+                _VIDEO_LOGGER.info(
+                    "All participants left the room; shutting down the agent worker."
+                )
+                self._ctx.shutdown("room-empty")
+            finally:
+                self._shutdown_task = None
+
+        self._shutdown_task = asyncio.create_task(_shutdown(), name="voice-agent.shutdown")
+
 
 __all__ = ["ParticipantGreeter"]
-
