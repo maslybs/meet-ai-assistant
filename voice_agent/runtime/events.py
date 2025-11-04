@@ -6,6 +6,11 @@ from typing import Any, Optional
 _VIDEO_LOGGER = logging.getLogger("voice-agent.video")
 
 try:
+    from livekit import api as _lk_api  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    _lk_api = None  # type: ignore[assignment]
+
+try:
     from livekit import rtc as _lk_rtc  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
     _lk_rtc = None  # type: ignore[assignment]
@@ -36,6 +41,7 @@ class ParticipantGreeter:
         broadcast_mode: bool,
         greeting_text: str,
         terminate_on_empty: bool,
+        close_room_on_empty: bool,
         shutdown_delay: float,
     ) -> None:
         self._ctx = ctx
@@ -44,6 +50,7 @@ class ParticipantGreeter:
         self._broadcast_mode = broadcast_mode
         self._greeting_text = greeting_text
         self._terminate_on_empty = terminate_on_empty
+        self._close_room_on_empty = close_room_on_empty
         self._shutdown_delay = max(0.0, shutdown_delay)
         self._greeted_identities: set[str] = set()
         self._inflight_initializations: set[str] = set()
@@ -164,6 +171,8 @@ class ParticipantGreeter:
             _VIDEO_LOGGER.warning("Media for %s not ready: %s", identity, exc)
         except Exception as exc:  # pragma: no cover - best effort logging
             _VIDEO_LOGGER.warning("Unexpected media wait failure for %s: %s", identity, exc)
+        else:
+            await asyncio.sleep(0)
 
         try:
             if not self._session.input.audio_enabled:
@@ -207,6 +216,9 @@ class ParticipantGreeter:
                     source = getattr(audio_input, "publication_source", None)
                     if source is None:
                         audio_ready = False
+                forward_task = getattr(audio_input, "_forward_atask", None)
+                if forward_task is None:
+                    audio_ready = False
 
             if broadcast:
                 if audio_ready:
@@ -314,9 +326,23 @@ class ParticipantGreeter:
                 ]
                 if remaining:
                     return
-                _VIDEO_LOGGER.info(
-                    "All participants left the room; shutting down the agent worker."
-                )
+                if self._close_room_on_empty and _lk_api is not None:
+                    try:
+                        await self._ctx.api.room.delete_room(
+                            _lk_api.DeleteRoomRequest(room=self._ctx.room.name)
+                        )
+                        _VIDEO_LOGGER.info(
+                            "Closed LiveKit room '%s' after last participant left.",
+                            self._ctx.room.name,
+                        )
+                    except Exception as exc:  # pragma: no cover - best effort logging
+                        _VIDEO_LOGGER.warning(
+                            "Failed to close room '%s': %s", self._ctx.room.name, exc
+                        )
+                else:
+                    _VIDEO_LOGGER.info(
+                        "All participants left the room; shutting down the agent worker."
+                    )
                 self._ctx.shutdown("room-empty")
             finally:
                 self._shutdown_task = None

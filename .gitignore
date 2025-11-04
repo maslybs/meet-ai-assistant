@@ -3,4 +3,4 @@ start.sh
 __pycache__
 agent-refactor.md
 voice_agent/__pycache__
-.pycache
+*.pycache*

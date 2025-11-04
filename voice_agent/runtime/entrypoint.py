@@ -62,6 +62,14 @@ def _should_terminate_on_empty(job_metadata: dict[str, Any]) -> bool:
     return terminate
 
 
+def _should_close_room_on_empty(job_metadata: dict[str, Any]) -> bool:
+    close_default = os.getenv("VOICE_AGENT_CLOSE_ROOM_ON_EMPTY", "true")
+    close_room = _is_truthy(close_default)
+    if "close_room_on_empty" in job_metadata:
+        close_room = _is_truthy(job_metadata.get("close_room_on_empty"))
+    return close_room
+
+
 def _resolve_room_empty_delay(job_metadata: dict[str, Any]) -> float:
     delay_raw = os.getenv("VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY", "3.0")
     if "room_empty_shutdown_delay" in job_metadata:
@@ -81,6 +89,7 @@ def _create_participant_greeter(
     *,
     broadcast_mode: bool,
     terminate_on_empty: bool,
+    close_room_on_empty: bool,
     shutdown_delay: float,
 ) -> Optional[ParticipantGreeter]:
     room_io = getattr(session_artifacts.session, "_room_io", None)
@@ -108,6 +117,7 @@ def _create_participant_greeter(
         broadcast_mode=broadcast_mode,
         greeting_text=greeting_text,
         terminate_on_empty=terminate_on_empty,
+        close_room_on_empty=close_room_on_empty,
         shutdown_delay=shutdown_delay,
     )
     greeter.attach()
@@ -151,10 +161,11 @@ async def run_job(ctx: Any) -> None:
 
     broadcast_mode = _resolve_broadcast_mode(job_metadata)
     terminate_on_empty = _should_terminate_on_empty(job_metadata)
+    close_room_on_empty = _should_close_room_on_empty(job_metadata)
     shutdown_delay = _resolve_room_empty_delay(job_metadata)
 
     async def _stop_session(_: str) -> None:
-        await session_artifacts.session.stop()
+        await session_artifacts.session.aclose()
 
     ctx.add_shutdown_callback(_stop_session)
 
@@ -163,6 +174,7 @@ async def run_job(ctx: Any) -> None:
         session_artifacts,
         broadcast_mode=broadcast_mode,
         terminate_on_empty=terminate_on_empty,
+        close_room_on_empty=close_room_on_empty,
         shutdown_delay=shutdown_delay,
     )
 

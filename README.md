@@ -47,7 +47,7 @@ python main.py
 The worker:
 - waits for LiveKit jobs, connects to the room, and wires audio/video to the Gemini Realtime model;
 - refuses to become the first host unless `VOICE_AGENT_WAIT_FOR_OCCUPANT=false`.
-- automatically terminates a few seconds after the last remote participant leaves (tune via `VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY`, disable with `VOICE_AGENT_TERMINATE_ON_EMPTY=false`).
+- automatically terminates a few seconds after the last remote participant leaves (tune via `VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY`, disable with `VOICE_AGENT_TERMINATE_ON_EMPTY=false`). Якщо `VOICE_AGENT_CLOSE_ROOM_ON_EMPTY=true` (за замовчуванням), кімната закривається через LiveKit API.
 
 For development or production deployments using `start`, `dev`, or LiveKit Cloud agent dispatch, ensure the same environment variables are supplied.
 
@@ -71,7 +71,7 @@ Because video encoding uses Pillow, failure to install `livekit-agents[images]` 
 - `RoomInputOptions(close_on_disconnect=False)` keeps the media pipeline alive while participants are present.
 - Custom participant event hooks reconnect RoomIO to the next arriving participant, restoring audio/video automatically.
 - `user_away_timeout=None` disables idle timeouts inside `AgentSession`, so the agent won’t shut down mid-conversation.
-- Automatic shutdown on an empty room prevents idle resource usage; set `VOICE_AGENT_TERMINATE_ON_EMPTY=false` (or metadata `terminate_on_empty: false`) if you prefer the previous “always on” behaviour.
+- Automatic shutdown on an empty room prevents idle resource usage; set `VOICE_AGENT_TERMINATE_ON_EMPTY=false` (or metadata `terminate_on_empty: false`) if you prefer the previous “always on” behaviour. Для повного очищення контексту можна окремо вимкнути `VOICE_AGENT_CLOSE_ROOM_ON_EMPTY`.
 
 ---
 
@@ -81,7 +81,7 @@ Because video encoding uses Pillow, failure to install `livekit-agents[images]` 
 - By default the assistant introduces herself as **Hanna**, a polite Ukrainian-speaking helper who offers practical guidance. She never mentions physical abilities unprompted but will answer health-related questions delicately if the user explicitly asks.
 - `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE` – override model, voice, and creativity.
 - `GEMINI_ENABLE_SEARCH` – enable the experimental Gemini Google Search tool. Supported overrides: job metadata can pass `enable_search: true` to toggle it per room/session.
-- `VOICE_AGENT_TERMINATE_ON_EMPTY` – завершує воркер, коли в кімнаті нікого не лишилося (true за замовчуванням). `VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY` – затримка перед завершенням (секунди).
+- `VOICE_AGENT_TERMINATE_ON_EMPTY` – завершує воркер, коли в кімнаті нікого не лишилося (true за замовчуванням). `VOICE_AGENT_CLOSE_ROOM_ON_EMPTY` – одразу викликає `DeleteRoom` у LiveKit після виходу всіх. `VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY` – затримка перед завершенням (секунди).
 - `VOICE_AGENT_WAIT_FOR_OCCUPANT`, `VOICE_AGENT_POLL_SECONDS`, `VOICE_AGENT_WAIT_TIMEOUT` – control the pre-join guard that prevents the agent from being the first participant.
 
 Refer to the official documentation for advanced deployment options:
