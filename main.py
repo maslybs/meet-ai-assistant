@@ -13,6 +13,7 @@ import json
 
 def _ensure_importlib_compat() -> None:
     """
+    1
     google.api_core expects importlib.metadata.packages_distributions which is
     only available in the stdlib starting with Python 3.10. When running on
     Python 3.9 we mirror the backport implementation to avoid runtime errors.
