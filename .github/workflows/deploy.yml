@@ -1,49 +1,52 @@
-name: Deploy
+name: Deploy via SSH
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      DEPLOY_PATH: /home/voice-ai-assistant
-      SERVICE_NAME: voice-ai.service
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Add host to known_hosts
+      - name: Setup SSH key and known_hosts
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Sync sources to server
+      - name: Test SSH connectivity
+        shell: bash
         run: |
-          rsync -az --delete --omit-dir-times --no-perms \
-            --exclude '.github/workflows' \
-            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${DEPLOY_PATH}/"
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "echo 'ssh: ok'"
 
-      - name: Install dependencies and restart service
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      - name: Rsync to server
+        shell: bash
         run: |
-          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" <<'REMOTE'
-            set -euo pipefail
-            cd "${DEPLOY_PATH}"
-            if [ -f package.json ]; then
-              npm ci --omit=dev || npm install
-            fi
-            if [ -x ./deploy.sh ]; then
-              ./deploy.sh
-            fi
-            sudo systemctl restart "${SERVICE_NAME}"
-          REMOTE
+          set -euo pipefail
+          RSYNC_SSH="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes"
+          rsync -az --delete \
+            --omit-dir-times --no-perms --no-owner --no-group \
+            --exclude='.git' --exclude='.github' \
+            --exclude='.venv' --exclude='venv' \
+            --exclude='deploy_key' --exclude='deploy_key.pub' \
+            -e "$RSYNC_SSH" \
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/voice-ai-assistant/"
+
+      - name: Post-deploy (optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "if [ -x /home/voice-ai-assistant/deploy.sh ]; then cd /home/voice-ai-assistant && ./deploy.sh; fi"
+
