@@ -27,7 +27,7 @@ jobs:
 
       - name: Sync sources to server
         run: |
-          rsync -az --delete \
+          rsync -az --delete --omit-dir-times --no-perms \
             --exclude '.github/workflows' \
             ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${DEPLOY_PATH}/"
 
