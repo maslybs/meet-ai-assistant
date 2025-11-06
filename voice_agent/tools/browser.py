@@ -113,7 +113,11 @@ async def browse_web_page(
             return None
         return None
 
-    wait_condition = wait_default or "networkidle"
+    allowed_wait_conditions = {"load", "domcontentloaded", "networkidle", "commit"}
+    wait_default_normalized = (wait_default or "").lower()
+    wait_condition = (
+        wait_default_normalized if wait_default_normalized in allowed_wait_conditions else "networkidle"
+    )
     extra_wait_ms = 2000
 
     extra_wait_env = os.getenv("VOICE_AGENT_BROWSER_EXTRA_WAIT_MS", "").strip()
@@ -122,13 +126,53 @@ async def browse_web_page(
         if parsed_wait is not None:
             extra_wait_ms = parsed_wait
 
-    wait_value = str(wait).strip() if wait else ""
-    if wait_value:
-        parsed_wait = _parse_wait_value(wait_value)
+    def _coerce_wait_ms(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return max(0, int(float(value) * 1000))
+        if isinstance(value, dict):
+            for key, factor in (
+                ("milliseconds", 1),
+                ("ms", 1),
+                ("seconds", 1000),
+                ("s", 1000),
+            ):
+                if key in value:
+                    try:
+                        return max(0, int(float(value[key]) * factor))
+                    except (TypeError, ValueError):
+                        continue
+            # Fallback: try to parse any first value as string
+            try:
+                first_val = next(iter(value.values()))
+            except StopIteration:
+                return None
+            return _parse_wait_value(str(first_val).strip())
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            lowered = normalized.lower()
+            if lowered in allowed_wait_conditions:
+                return None
+            return _parse_wait_value(normalized)
+        # Fallback: attempt to parse string representation
+        return _parse_wait_value(str(value).strip())
+
+    if isinstance(wait, str):
+        lowered = wait.strip().lower()
+        if lowered in allowed_wait_conditions:
+            wait_condition = lowered
+        else:
+            parsed_wait = _coerce_wait_ms(wait)
+            if parsed_wait is not None:
+                extra_wait_ms = parsed_wait
+
+    else:
+        parsed_wait = _coerce_wait_ms(wait)
         if parsed_wait is not None:
             extra_wait_ms = parsed_wait
-        else:
-            wait_condition = wait_value
 
     idle_timeout_raw = os.getenv("VOICE_AGENT_BROWSER_IDLE_SECONDS", "60").strip()
     try:
