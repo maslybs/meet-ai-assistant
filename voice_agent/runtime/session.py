@@ -180,11 +180,20 @@ def build_agent_session(settings: SessionSettings) -> SessionArtifacts:
         llm_kwargs["_gemini_tools"] = gemini_tools
         _GEMINI_LOGGER.info("Google Search tool enabled for Gemini Realtime session.")
 
+    interruption_duration = float(os.getenv("VOICE_AGENT_MIN_INTERRUPTION_DURATION", "0.2"))
+    interruption_words = int(os.getenv("VOICE_AGENT_MIN_INTERRUPTION_WORDS", "0"))
+    endpoint_delay = float(os.getenv("VOICE_AGENT_MIN_ENDPOINTING_DELAY", "0.3"))
+
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
             **llm_kwargs,
         ),
         user_away_timeout=None,
+        allow_interruptions=True,
+        discard_audio_if_uninterruptible=True,
+        min_interruption_duration=max(0.05, interruption_duration),
+        min_interruption_words=max(0, interruption_words),
+        min_endpointing_delay=max(0.0, endpoint_delay),
         **agent_session_kwargs,
     )
 
