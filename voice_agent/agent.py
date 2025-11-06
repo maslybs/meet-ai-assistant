@@ -6,7 +6,7 @@ import os
 import re
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 from html import unescape
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -254,7 +254,10 @@ class GeminiVisionAgent(AgentBase):
             if parsed_env_wait is not None:
                 extra_wait_ms = parsed_env_wait
 
-        wait_value = (wait or "").strip()
+        if isinstance(wait, (int, float)):
+            wait_value = str(wait)
+        else:
+            wait_value = (wait or "").strip()
         if wait_value:
             parsed_wait = _parse_wait_value(wait_value)
             if parsed_wait is not None:
@@ -276,6 +279,7 @@ class GeminiVisionAgent(AgentBase):
         main_text = ""
         meta_title = ""
         meta_desc = ""
+        header_line = f"Починаю перегляд {final_url}."
 
         try:
             page = await pool.acquire_page(
@@ -369,14 +373,84 @@ class GeminiVisionAgent(AgentBase):
                 await pool.release_page(page)
 
         if error_message:
-            return error_message
+            fallback_url = self._derive_browser_fallback(final_url)
+            if fallback_url:
+                follow_up = await self.browse_web_page(_, fallback_url, wait=wait, max_chars=max_chars)
+                return "\n".join(
+                    [
+                        header_line,
+                        f"Сталася помилка під час перегляду: {error_message}. Пробую інший ресурс...",
+                        follow_up,
+                    ]
+                )
+            return (
+                f"{header_line}\n"
+                f"Сталася помилка під час перегляду: {error_message}. Спробуй інший ресурс або повтори пізніше."
+            )
         if not text_result:
-            return "Сторінка не повернула текстового вмісту."
+            fallback_url = self._derive_browser_fallback(final_url)
+            if fallback_url:
+                follow_up = await self.browse_web_page(_, fallback_url, wait=wait, max_chars=max_chars)
+                return "\n".join(
+                    [
+                        header_line,
+                        f"На сторінці {final_url} не вдалося знайти читабельний текст. Перевірю інший сайт...",
+                        follow_up,
+                    ]
+                )
+            return (
+                f"{header_line}\n"
+                f"На сторінці {final_url} не вдалося знайти читабельний текст. Спробуй інший сайт або уточни запит."
+            )
 
         if len(text_result) > max_chars_val:
             text_result = text_result[: max_chars_val - 3].rstrip() + "..."
 
-        return text_result
+        return f"{header_line}\nЗавершила перегляд {final_url}.\n{text_result}"
+    def _derive_browser_fallback(self, source_url: str) -> Optional[str]:
+        parsed = urlparse(source_url)
+        host = (parsed.netloc or "").lower()
+        query = parse_qs(parsed.query)
+
+        search_term = ""
+        for key in ("text", "search_term", "q"):
+            values = query.get(key)
+            if values:
+                candidate = values[0].strip()
+                if candidate:
+                    search_term = candidate
+                    break
+
+        if not search_term:
+            return None
+
+        encoded = quote_plus(search_term)
+        if "rozetka" in host:
+            candidate = f"https://prom.ua/ua/search?search_term={encoded}"
+        elif "google." in host:
+            candidate = f"https://rozetka.com.ua/ua/search/?text={encoded}"
+        else:
+            candidate = None
+
+        if not candidate:
+            return None
+
+        normalized = self._normalize_url(candidate)
+        if not normalized or normalized.lower() == source_url.lower():
+            return None
+        return normalized
+
+    def _normalize_url(self, raw_url: str) -> Optional[str]:
+        value = raw_url.strip()
+        if not value:
+            return None
+        if not urlparse(value).scheme:
+            value = f"https://{value}"
+        parsed = urlparse(value)
+        if not parsed.netloc:
+            return None
+        return value
+
     @function_tool
     async def fetch_rss_news(
         self, _: RunContext, feed_url: str = "", limit: int | str = 3
