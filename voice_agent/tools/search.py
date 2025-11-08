@@ -63,13 +63,15 @@ async def google_search_api(_: Any, query: str, limit: int | str = 5) -> str:
 
     try:
         payload = await loop.run_in_executor(None, _fetch)
-    except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError) as exc:
+    except urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
+        return f"Google Search API HTTP {exc.code}: {body or exc}"
+    except (urllib_error.URLError, TimeoutError) as exc:
         return f"Google Search API недоступний ({exc})."
 
     error_info = payload.get("error")
     if error_info:
-        message = error_info.get("message") or json.dumps(error_info, ensure_ascii=False)
-        return f"Google Search API повернув помилку: {message}"
+        return f"Google Search API повернув помилку: {json.dumps(error_info, ensure_ascii=False)}"
 
     items = payload.get("items") or []
     if not items:
