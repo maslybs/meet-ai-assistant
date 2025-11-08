@@ -234,18 +234,25 @@ async def browse_web_page(
         idle_timeout = 60.0
     idle_timeout = max(0.0, min(idle_timeout, 3600.0))
 
-    if proxy_server:
-        proxy = ProxyConfig(
-            server=proxy_server,
-            username=proxy_username,
-            password=proxy_password,
-            bypass=proxy_bypass,
-        )
-    else:
-        proxy = None
+    proxy_enabled = os.getenv("VOICE_AGENT_BROWSER_ENABLE_PROXY", "1").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
-    if proxy is None:
-        proxy = await _maybe_fetch_webshare_proxy()
+    proxy = None
+    if proxy_enabled:
+        if proxy_server:
+            proxy = ProxyConfig(
+                server=proxy_server,
+                username=proxy_username,
+                password=proxy_password,
+                bypass=proxy_bypass,
+            )
+        else:
+            proxy = await _maybe_fetch_webshare_proxy()
 
     pool = get_browser_pool()
     page = None
