@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Optional
 
-from .tools import browser, rss, time_tools, video
+from .tools import browser, rss, search, time_tools, video
 
 try:
     from livekit.agents import Agent as _AgentBase, RunContext as _RunContext
@@ -68,6 +68,10 @@ class GeminiVisionAgent(AgentBase):
         self, _: RunContext, feed_url: str = "", limit: int | str = 3
     ) -> str:
         return await rss.fetch_rss_news(None, feed_url=feed_url, limit=limit)
+
+    @function_tool
+    async def google_search_api(self, _: RunContext, query: str, limit: int | str = 5) -> str:
+        return await search.google_search_api(None, query=query, limit=limit)
 
 
 __all__ = [

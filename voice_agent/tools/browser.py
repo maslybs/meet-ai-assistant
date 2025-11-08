@@ -1,9 +1,13 @@
+import asyncio
+import json
 import logging
 import os
 import random
 import re
 from typing import Any, Optional, Sequence
 from urllib.parse import urlparse
+from urllib import request as urllib_request
+from urllib import error as urllib_error
 
 from ..browser_pool import BrowserContextConfig, ProxyConfig, get_browser_pool
 
@@ -240,6 +244,9 @@ async def browse_web_page(
     else:
         proxy = None
 
+    if proxy is None:
+        proxy = await _maybe_fetch_webshare_proxy()
+
     pool = get_browser_pool()
     page = None
     text_result = ""
@@ -343,3 +350,80 @@ async def browse_web_page(
         text_result = text_result[: max_chars_val - 3].rstrip() + "..."
 
     return text_result
+
+
+async def _maybe_fetch_webshare_proxy() -> Optional[ProxyConfig]:
+    api_key = os.getenv("VOICE_AGENT_WEBSHARE_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    endpoint = os.getenv(
+        "VOICE_AGENT_WEBSHARE_ENDPOINT",
+        "https://proxy.webshare.io/api/proxy/list/",
+    ).strip()
+    query = os.getenv("VOICE_AGENT_WEBSHARE_QUERY", "mode=direct&limit=20").strip()
+    if query:
+        separator = "&" if "?" in endpoint else "?"
+        url = f"{endpoint}{separator}{query}"
+    else:
+        url = endpoint
+
+    headers = {
+        "Authorization": api_key,
+        "Accept": "application/json",
+    }
+
+    timeout_raw = os.getenv("VOICE_AGENT_WEBSHARE_TIMEOUT", "10").strip()
+    try:
+        timeout = max(3.0, float(timeout_raw))
+    except ValueError:
+        timeout = 10.0
+
+    loop = asyncio.get_running_loop()
+
+    def _fetch() -> bytes:
+        req = urllib_request.Request(url, headers=headers)
+        with urllib_request.urlopen(req, timeout=timeout) as response:
+            return response.read()
+
+    try:
+        payload = await loop.run_in_executor(None, _fetch)
+    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError) as exc:
+        _BROWSER_LOGGER.warning("Webshare proxy request failed: %s", exc)
+        return None
+
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        _BROWSER_LOGGER.warning("Webshare proxy response is not JSON: %s", exc)
+        return None
+
+    results = data.get("results") or data.get("data") or []
+    if not isinstance(results, list) or not results:
+        _BROWSER_LOGGER.warning("Webshare proxy list is empty.")
+        return None
+
+    entry = random.choice(results)
+    host = entry.get("proxy_address") or entry.get("ip") or entry.get("host")
+    port = entry.get("port") or entry.get("proxy_port")
+    scheme = entry.get("protocol") or entry.get("scheme") or "http"
+    username = entry.get("username") or entry.get("user")
+    password = entry.get("password") or entry.get("pass") or entry.get("pwd")
+
+    if not host or not port:
+        _BROWSER_LOGGER.warning("Webshare proxy entry missing host/port; skipping.")
+        return None
+
+    try:
+        port_int = int(str(port))
+    except ValueError:
+        _BROWSER_LOGGER.warning("Webshare proxy entry has invalid port: %s", port)
+        return None
+
+    server = f"{scheme}://{host}:{port_int}"
+    return ProxyConfig(
+        server=server,
+        username=username,
+        password=password,
+        bypass=None,
+    )

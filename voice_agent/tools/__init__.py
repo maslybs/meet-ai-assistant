@@ -7,6 +7,7 @@ agent definition lightweight while reusing the actual tool implementations.
 
 __all__ = [
     "browser",
+    "search",
     "rss",
     "time_tools",
     "video",
