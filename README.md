@@ -81,8 +81,14 @@ Because video encoding uses Pillow, failure to install `livekit-agents[images]` 
 - By default the assistant introduces herself as **Hanna**, a polite Ukrainian-speaking helper who offers practical guidance. She never mentions physical abilities unprompted but will answer health-related questions delicately if the user explicitly asks.
 - `GEMINI_MODEL`, `GEMINI_TTS_VOICE`, `GEMINI_TEMPERATURE` – override model, voice, and creativity.
 - `GEMINI_ENABLE_SEARCH` – enable the experimental Gemini Google Search tool. Supported overrides: job metadata can pass `enable_search: true` to toggle it per room/session.
+- `browse_web_page` – тул headless-браузера на базі Playwright. Використовує Chromium у режимі без вікна, повертає текст сторінки. Налаштування: `VOICE_AGENT_BROWSER_HOME`, `VOICE_AGENT_BROWSER_TIMEOUT_MS`, `VOICE_AGENT_BROWSER_MAX_CHARS`, `VOICE_AGENT_BROWSER_USER_AGENT`, `VOICE_AGENT_BROWSER_LOCALE`, `VOICE_AGENT_BROWSER_TIMEZONE`, `VOICE_AGENT_BROWSER_WAIT_UNTIL`, `VOICE_AGENT_BROWSER_CHROMIUM_ARGS`, `VOICE_AGENT_BROWSER_VIEWPORT_WIDTH`, `VOICE_AGENT_BROWSER_VIEWPORT_HEIGHT`, `VOICE_AGENT_BROWSER_EXTRA_WAIT_MS` (стандартно 2000 мс), `VOICE_AGENT_BROWSER_IDLE_SECONDS`.
+- **Webshare auto-proxy** – якщо потрібно маскуватися під різні IP, задайте `VOICE_AGENT_WEBSHARE_API_KEY` (те саме, що ви використовуєте у Webshare), опційно `VOICE_AGENT_WEBSHARE_QUERY` (наприклад, `mode=direct&limit=50&country_code=PL`) та `VOICE_AGENT_WEBSHARE_TIMEOUT`. Якщо `VOICE_AGENT_BROWSER_PROXY_SERVER` не задано, тул автоматично викличе Webshare API, обере випадковий проксі, підставить повернені `username`/`password` і використовуватиме його у Playwright. Для статичного проксі просто задайте `VOICE_AGENT_BROWSER_PROXY_SERVER/USERNAME/PASSWORD` вручну і тул пропустить Webshare.
+- `google_search_api` – тул, що використовує Google Programmable Search JSON API і повертає короткі результати пошуку (назва, лінк, сніпет). Налаштування: `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_ENGINE_ID` (cx), `GOOGLE_SEARCH_LANG`, `GOOGLE_SEARCH_SAFE`, `GOOGLE_SEARCH_SITE_RESTRICT`, `GOOGLE_SEARCH_DATE_RESTRICT`. Якщо ці змінні не задано, агент повідомить, що пошук недоступний.
+- `current_time_utc_plus3` – тул для оголошення поточного часу у Києві/UTC+3. За потреби можна змінити часовий пояс `VOICE_AGENT_TIMEZONE` або задати зсув `VOICE_AGENT_TIME_OFFSET_HOURS`.
+- `fetch_rss_news` – вбудований тул агента для читання RSS-стрічок. Укажіть повний URL (та опційно `limit`) у запиті, і Ганна перерахує останні публікації. Якщо URL не задано, можна задати `VOICE_AGENT_RSS_FEED` (та `VOICE_AGENT_RSS_LIMIT`) у середовищі; `VOICE_AGENT_RSS_ALLOW_OVERRIDE=true` дозволяє користувачу змінювати URL і ліміт у запиті, а `VOICE_AGENT_RSS_USER_AGENT` задає HTTP User-Agent.
 - `VOICE_AGENT_TERMINATE_ON_EMPTY` – завершує воркер, коли в кімнаті нікого не лишилося (true за замовчуванням). `VOICE_AGENT_CLOSE_ROOM_ON_EMPTY` – одразу викликає `DeleteRoom` у LiveKit після виходу всіх. `VOICE_AGENT_ROOM_EMPTY_SHUTDOWN_DELAY` – затримка перед завершенням (секунди). `VOICE_AGENT_GREETING_DELAY` – затримка перед автоматичним привітанням (секунди, стандартно 0.5).
 - `VOICE_AGENT_WAIT_FOR_OCCUPANT`, `VOICE_AGENT_POLL_SECONDS`, `VOICE_AGENT_WAIT_TIMEOUT` – control the pre-join guard that prevents the agent from being the first participant.
+- `VOICE_AGENT_MIN_INTERRUPTION_DURATION`, `VOICE_AGENT_MIN_INTERRUPTION_WORDS`, `VOICE_AGENT_MIN_ENDPOINTING_DELAY` – тонке налаштування поведінки “barge-in”, коли користувач перебиває поточну відповідь. За замовчуванням агент реагує після ~0.2 секунди нового мовлення.
 
 Refer to the official documentation for advanced deployment options:
 - [LiveKit Agents](https://docs.livekit.io/agents/start/voice-ai/)
@@ -94,7 +100,9 @@ Refer to the official documentation for advanced deployment options:
 ## Quick Checklist
 
 1. Activate virtualenv → `source .venv/bin/activate`
-2. Install dependencies → `pip install -r requirements.txt && python -m pip install "livekit-agents[images]"`
-3. Populate `.env` with LiveKit/Gemini credentials, prompt overrides (if any), and optional video settings
-4. Launch the worker → `python main.py`
-5. Join the target room from the client; the agent should greet you immediately, consuming audio and video in real time
+2. Install dependencies → `pip install -r requirements.txt`
+3. (For the browser tool) Install the renderer → `python -m playwright install chromium`
+4. (Linux) Install the system packages required by headless Chromium (GTK, NSS, ALSA, libdrm, etc.). If anything is missing, `playwright install` will list the exact packages.
+5. Populate `.env` with LiveKit/Gemini credentials, prompt overrides (if any), and optional video settings
+6. Launch the worker → `python main.py`
+7. Join the target room from the client; the agent should greet you immediately, consuming audio and video in real time

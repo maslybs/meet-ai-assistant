@@ -1,6 +1,7 @@
 import asyncio
-import logging
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Optional
+
+from .tools import browser, rss, search, time_tools, video
 
 try:
     from livekit.agents import Agent as _AgentBase, RunContext as _RunContext
@@ -12,11 +13,6 @@ except ImportError as exc:  # pragma: no cover - local dev without LiveKit
     LIVEKIT_IMPORT_ERROR: Optional[ImportError] = exc
 else:
     LIVEKIT_IMPORT_ERROR = None
-
-if TYPE_CHECKING:
-    from livekit.agents import AgentSession  # pragma: no cover
-else:  # pragma: no cover - runtime fallback
-    AgentSession = Any  # type: ignore
 
 
 class _AgentStub:
@@ -36,15 +32,8 @@ def function_tool(func):  # type: ignore[misc]
     return _function_tool(func)
 
 
-_VIDEO_LOGGER = logging.getLogger("voice-agent.video")
-
-
 class GeminiVisionAgent(AgentBase):
-    """
-    Custom agent that exposes tools for managing the room video feed.
-    Video is consumed automatically when available, while still giving the user
-    an explicit way to pause or resume it.
-    """
+    """Agent that exposes a small set of reusable function tools."""
 
     def __init__(self, *, instructions: str) -> None:
         super().__init__(instructions=instructions)
@@ -52,43 +41,37 @@ class GeminiVisionAgent(AgentBase):
 
     @function_tool
     async def enable_video_feed(self, _: RunContext) -> str:
-        """
-        Увімкнути передачу відео з камери користувача, якщо її було вимкнено раніше.
-        """
-
         async with self._video_toggle_lock:
-            session: Optional[AgentSession] = getattr(self, "session", None)
-            if session is None:
-                return "Зараз не можу отримати відео, спробуйте пізніше."
-
-            video_stream = session.input.video
-            if video_stream is None:
-                return "Відео від учасника недоступне. Переконайтеся, що камера увімкнена."
-
-            if session.input.video_enabled:
-                return "Відео вже увімкнене."
-
-            session.input.set_video_enabled(True)
-            _VIDEO_LOGGER.info("Video feed enabled by request")
-            return "Добре, я бачу відео. Дайте знати, що саме потрібно показати."
+            return await video.enable_video_feed(self)
 
     @function_tool
     async def disable_video_feed(self, _: RunContext) -> str:
-        """
-        Вимкнути захоплення відео, щоб зекономити ресурси або надати приватність на вимогу.
-        """
-
         async with self._video_toggle_lock:
-            session: Optional[AgentSession] = getattr(self, "session", None)
-            if session is None or session.input.video is None:
-                return "Зараз відеосигнал недоступний."
+            return await video.disable_video_feed(self)
 
-            if not session.input.video_enabled:
-                return "Відео вже вимкнене."
+    @function_tool
+    async def current_time_utc_plus3(self, _: RunContext) -> str:
+        return await time_tools.current_time_utc_plus3(None)
 
-            session.input.set_video_enabled(False)
-            _VIDEO_LOGGER.info("Video feed disabled on request")
-            return "Вимкнула відео. Якщо знадобиться знову, просто скажіть."
+    @function_tool
+    async def browse_web_page(
+        self,
+        _: RunContext,
+        url: str,
+        wait: Any = "",
+        max_chars: int | str = 0,
+    ) -> str:
+        return await browser.browse_web_page(None, url, wait=wait, max_chars=max_chars)
+
+    @function_tool
+    async def fetch_rss_news(
+        self, _: RunContext, feed_url: str = "", limit: int | str = 3
+    ) -> str:
+        return await rss.fetch_rss_news(None, feed_url=feed_url, limit=limit)
+
+    @function_tool
+    async def google_search_api(self, _: RunContext, query: str, limit: int | str = 5) -> str:
+        return await search.google_search_api(None, query=query, limit=limit)
 
 
 __all__ = [

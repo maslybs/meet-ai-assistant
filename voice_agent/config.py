@@ -36,7 +36,7 @@ class AgentConfig:
     instructions: str
     agent_name: str
     model: str = "gemini-1.5-pro"
-    voice: str = "Charis"
+    voice: str = "Achernar"
     temperature: float = 0.8
     enable_search: bool = False
 
@@ -73,5 +73,5 @@ def _resolve_voice_override(default: Optional[str] = None) -> str:
         return override
     if default:
         return default.strip()
-    return "Charis"
+    return "Achernar"
 
