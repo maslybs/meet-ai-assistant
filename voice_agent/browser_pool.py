@@ -22,12 +22,21 @@ if (originalQuery) {
 
 
 @dataclass(frozen=True)
+class ProxyConfig:
+    server: str
+    username: Optional[str]
+    password: Optional[str]
+    bypass: Optional[str]
+
+
+@dataclass(frozen=True)
 class BrowserContextConfig:
     chromium_args: Tuple[str, ...]
     user_agent: Optional[str]
     locale: str
     timezone_id: str
     viewport: Tuple[int, int]
+    proxy: Optional[ProxyConfig]
 
 
 class PlaywrightBrowserPool:
@@ -102,7 +111,10 @@ class PlaywrightBrowserPool:
 
         launch_timeout_ms = max(1000, launch_timeout_ms)
 
-        need_new_browser = self._browser is None or self._chromium_args != config.chromium_args
+        need_new_browser = (
+            self._browser is None
+            or self._chromium_args != config.chromium_args
+        )
         browser_to_close = None
         context_to_close = None
         playwright_to_stop = None
@@ -118,16 +130,27 @@ class PlaywrightBrowserPool:
             self._chromium_args = None
 
         if browser_to_close or context_to_close or playwright_to_stop:
-                await self._shutdown_objects(context_to_close, browser_to_close, playwright_to_stop)
+            await self._shutdown_objects(context_to_close, browser_to_close, playwright_to_stop)
 
         if self._browser is None:
             if self._playwright is None:
                 self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
+            launch_params = dict(
                 headless=True,
                 args=list(config.chromium_args),
                 timeout=launch_timeout_ms,
             )
+            if config.proxy is not None:
+                launch_params["proxy"] = {
+                    "server": config.proxy.server,
+                }
+                if config.proxy.username:
+                    launch_params["proxy"]["username"] = config.proxy.username
+                if config.proxy.password:
+                    launch_params["proxy"]["password"] = config.proxy.password
+                if config.proxy.bypass:
+                    launch_params["proxy"]["bypass"] = config.proxy.bypass
+            self._browser = await self._playwright.chromium.launch(**launch_params)
             self._chromium_args = config.chromium_args
 
         if self._context is None or self._context_config != config:
@@ -235,4 +258,4 @@ def get_browser_pool() -> PlaywrightBrowserPool:
     return _POOL
 
 
-__all__ = ["BrowserContextConfig", "PlaywrightBrowserPool", "get_browser_pool"]
+__all__ = ["BrowserContextConfig", "PlaywrightBrowserPool", "ProxyConfig", "get_browser_pool"]

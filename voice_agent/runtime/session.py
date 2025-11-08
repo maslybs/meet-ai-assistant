@@ -89,7 +89,12 @@ def _resolve_gemini_api_key() -> Optional[str]:
 
 
 def _resolve_gemini_tools(*, enable_search: bool) -> list[Any]:
-    if not enable_search:
+    allow_google_tools = _is_truthy(os.getenv("VOICE_AGENT_ALLOW_GOOGLE_TOOLS", ""))
+    if not enable_search or not allow_google_tools:
+        if enable_search and not allow_google_tools:
+            _GEMINI_LOGGER.info(
+                "Gemini search requested but VOICE_AGENT_ALLOW_GOOGLE_TOOLS is disabled; skipping tool setup."
+            )
         return []
 
     try:
@@ -161,6 +166,12 @@ def _log_video_sampler_settings(sampler: Optional[Any]) -> None:
 
 
 def build_agent_session(settings: SessionSettings) -> SessionArtifacts:
+    if not _is_truthy(os.getenv("VOICE_AGENT_ENABLE_REALTIME", "1")):
+        raise RuntimeError(
+            "Google Realtime API usage is disabled (VOICE_AGENT_ENABLE_REALTIME=0). "
+            "Remove or set the variable to 1 to enable the voice agent."
+        )
+
     from livekit.agents import AgentSession, RoomInputOptions, RoomOutputOptions  # type: ignore
     from livekit.plugins import google  # type: ignore
 

@@ -1,13 +1,30 @@
 import logging
 import os
+import random
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from urllib.parse import urlparse
 
-from ..browser_pool import BrowserContextConfig, get_browser_pool
+from ..browser_pool import BrowserContextConfig, ProxyConfig, get_browser_pool
 
 
 _BROWSER_LOGGER = logging.getLogger("voice-agent.browser")
+_DEFAULT_USER_AGENTS: Sequence[str] = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15; rv:117.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.78 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:60.0) Gecko/20100101 Firefox/60.0",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.86 Safari/537.36",
+)
+_DEFAULT_VIEWPORTS: Sequence[tuple[int, int]] = (
+    (1920, 1080),
+    (1680, 1050),
+    (1600, 900),
+    (1536, 864),
+    (1440, 900),
+    (1366, 768),
+)
 
 
 async def browse_web_page(
@@ -40,18 +57,30 @@ async def browse_web_page(
         return "URL виглядає некоректним. Перевірте адресу і спробуйте ще раз."
     final_url = parsed.geturl()
 
-    user_agent = (
-        os.getenv(
-            "VOICE_AGENT_BROWSER_USER_AGENT",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        ).strip()
-        or None
-    )
+    user_agent_setting = os.getenv("VOICE_AGENT_BROWSER_USER_AGENT", "").strip()
+    user_agent_choices: Sequence[str]
+    if user_agent_setting:
+        separators = (",", "|", "\n")
+        normalized = user_agent_setting
+        for sep in separators:
+            normalized = normalized.replace(sep, "\n")
+        user_agent_choices = tuple(
+            ua.strip() for ua in normalized.splitlines() if ua.strip()
+        )
+        if not user_agent_choices:
+            user_agent_choices = _DEFAULT_USER_AGENTS
+    else:
+        user_agent_choices = _DEFAULT_USER_AGENTS
+    user_agent = random.choice(user_agent_choices)
+
     locale = os.getenv("VOICE_AGENT_BROWSER_LOCALE", "uk-UA").strip() or "uk-UA"
     timeout_ms_raw = os.getenv("VOICE_AGENT_BROWSER_TIMEOUT_MS", "").strip()
     wait_default = os.getenv("VOICE_AGENT_BROWSER_WAIT_UNTIL", "networkidle").strip()
     max_chars_env = os.getenv("VOICE_AGENT_BROWSER_MAX_CHARS", "").strip()
+    proxy_server = os.getenv("VOICE_AGENT_BROWSER_PROXY_SERVER", "").strip()
+    proxy_username = os.getenv("VOICE_AGENT_BROWSER_PROXY_USERNAME", "").strip() or None
+    proxy_password = os.getenv("VOICE_AGENT_BROWSER_PROXY_PASSWORD", "").strip() or None
+    proxy_bypass = os.getenv("VOICE_AGENT_BROWSER_PROXY_BYPASS", "").strip() or None
 
     def _resolve_int(
         raw: int | str | None, fallback: int, minimum: int, maximum: int | None = None
@@ -75,18 +104,23 @@ async def browse_web_page(
         minimum=500,
         maximum=12000,
     )
-    viewport_width = _resolve_int(
-        os.getenv("VOICE_AGENT_BROWSER_VIEWPORT_WIDTH", "").strip() or None,
-        fallback=1280,
-        minimum=640,
-        maximum=2560,
-    )
-    viewport_height = _resolve_int(
-        os.getenv("VOICE_AGENT_BROWSER_VIEWPORT_HEIGHT", "").strip() or None,
-        fallback=720,
-        minimum=480,
-        maximum=1600,
-    )
+    viewport_width_env = os.getenv("VOICE_AGENT_BROWSER_VIEWPORT_WIDTH", "").strip()
+    viewport_height_env = os.getenv("VOICE_AGENT_BROWSER_VIEWPORT_HEIGHT", "").strip()
+    if viewport_width_env or viewport_height_env:
+        viewport_width = _resolve_int(
+            viewport_width_env or None,
+            fallback=1280,
+            minimum=640,
+            maximum=2560,
+        )
+        viewport_height = _resolve_int(
+            viewport_height_env or None,
+            fallback=720,
+            minimum=480,
+            maximum=1600,
+        )
+    else:
+        viewport_width, viewport_height = random.choice(_DEFAULT_VIEWPORTS)
 
     chromium_args = [
         "--disable-blink-features=AutomationControlled",
@@ -160,6 +194,21 @@ async def browse_web_page(
         # Fallback: attempt to parse string representation
         return _parse_wait_value(str(value).strip())
 
+    random_jitter_env = os.getenv("VOICE_AGENT_BROWSER_RANDOM_DELAY_RANGE", "").strip()
+    if random_jitter_env:
+        try:
+            parts = [float(p) for p in re.split(r"[,;:/\-]+", random_jitter_env) if p.strip()]
+        except ValueError:
+            parts = []
+        if len(parts) == 1:
+            extra_wait_ms += max(0, int(parts[0] * 1000))
+        elif len(parts) >= 2:
+            low = max(0.0, min(parts[0], parts[1]))
+            high = max(parts[0], parts[1])
+            extra_wait_ms = int(random.uniform(low, high) * 1000)
+    elif not extra_wait_env:
+        extra_wait_ms = int(random.uniform(1.0, 3.5) * 1000)
+
     if isinstance(wait, str):
         lowered = wait.strip().lower()
         if lowered in allowed_wait_conditions:
@@ -181,6 +230,16 @@ async def browse_web_page(
         idle_timeout = 60.0
     idle_timeout = max(0.0, min(idle_timeout, 3600.0))
 
+    if proxy_server:
+        proxy = ProxyConfig(
+            server=proxy_server,
+            username=proxy_username,
+            password=proxy_password,
+            bypass=proxy_bypass,
+        )
+    else:
+        proxy = None
+
     pool = get_browser_pool()
     page = None
     text_result = ""
@@ -193,12 +252,44 @@ async def browse_web_page(
                 locale=locale,
                 timezone_id=os.getenv("VOICE_AGENT_BROWSER_TIMEZONE", "Europe/Kyiv"),
                 viewport=(viewport_width, viewport_height),
+                proxy=proxy,
             ),
             launch_timeout_ms=timeout_ms,
             idle_timeout_s=idle_timeout,
         )
         page.set_default_timeout(timeout_ms)
         page.set_default_navigation_timeout(timeout_ms)
+
+        block_resources_setting = os.getenv("VOICE_AGENT_BROWSER_BLOCK_RESOURCES", "1").strip().lower()
+        block_resources = block_resources_setting not in {"", "0", "false", "no"}
+        blocked_types = {"image", "media", "font"}
+        blocked_extensions = tuple(
+            ext.strip().lower()
+            for ext in os.getenv("VOICE_AGENT_BROWSER_BLOCK_EXT", ".ico,.png,.jpg,.jpeg,.gif,.svg,.webp,.mp4,.webm").split(",")
+            if ext.strip()
+        )
+
+        if block_resources:
+            async def _route_handler(route):  # type: ignore[no-untyped-def]
+                try:
+                    req = route.request
+                    resource_type = req.resource_type
+                    req_url = req.url.lower()
+                    if resource_type == "subframe":
+                        await route.abort()
+                        return
+                    if resource_type in blocked_types:
+                        await route.abort()
+                        return
+                    if blocked_extensions and any(req_url.endswith(ext) for ext in blocked_extensions):
+                        await route.abort()
+                        return
+                    await route.continue_()
+                except Exception:
+                    await route.continue_()
+
+            await page.route("**/*", _route_handler)
+
         await page.goto(final_url, wait_until=wait_condition or "networkidle", timeout=timeout_ms)
         if extra_wait_ms > 0:
             await page.wait_for_timeout(extra_wait_ms)
