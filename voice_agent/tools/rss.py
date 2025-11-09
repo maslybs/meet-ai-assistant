@@ -197,10 +197,21 @@ async def fetch_rss_news(_: Any, feed_url: str = "", limit: int | str = 3) -> st
         return "У стрічці немає публікацій."
 
     entries_output: list[str] = []
+
+    def _clean_text(value: str) -> str:
+        stripped = re.sub(r"\s+", " ", value).strip()
+        return stripped
+
     for item in entries[:limit_value]:
         title = (item.get("title") or "Без заголовка").strip()
         published = item.get("published") or item.get("updated") or ""
         link = item.get("link") or ""
+        guid = item.get("id") or item.get("guid") or ""
+
+        media_entries = item.get("media_content") or []
+        if not isinstance(media_entries, list):
+            media_entries = []
+
         summary = ""
         summary_candidates = [
             item.get("summary"),
@@ -216,15 +227,66 @@ async def fetch_rss_news(_: Any, feed_url: str = "", limit: int | str = 3) -> st
         header_parts: list[str] = [title]
         if published:
             header_parts.append(f"({published})")
-        if link:
-            header_parts.append(f"— {link}")
         entry_lines.append(" ".join(header_parts).strip())
+        if link:
+            entry_lines.append(f"Посилання: {link}")
+        if guid and guid != link:
+            entry_lines.append(f"GUID: {guid}")
         if summary:
             cleaned = re.sub(r"<[^>]+>", " ", summary)
             cleaned = unescape(cleaned)
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
             if cleaned:
-                entry_lines.append(cleaned)
+                entry_lines.append(f"Коротко: {cleaned}")
+
+        content_html = ""
+        content_candidates_html: list[str] = []
+        if item.get("content"):
+            for content_block in item["content"]:
+                if isinstance(content_block, dict):
+                    candidate_html = content_block.get("value") or ""
+                    if isinstance(candidate_html, str) and candidate_html.strip():
+                        content_candidates_html.append(candidate_html)
+        encoded = item.get("content_encoded") or item.get("content:encoded")
+        if isinstance(encoded, str) and encoded.strip():
+            content_candidates_html.append(encoded)
+        for candidate in content_candidates_html:
+            if candidate.strip():
+                content_html = candidate.strip()
+                break
+
+        if content_html:
+            entry_lines.append("Повний контент (HTML із content:encoded):")
+            entry_lines.append(content_html)
+
+        if media_entries:
+            media_lines: list[str] = []
+            for media in media_entries:
+                if not isinstance(media, dict):
+                    continue
+                media_url = media.get("url") or ""
+                if not media_url:
+                    continue
+                width = media.get("width")
+                height = media.get("height")
+                media_type = media.get("type") or ""
+                size_info = []
+                if width:
+                    size_info.append(f"w={width}")
+                if height:
+                    size_info.append(f"h={height}")
+                if media_type:
+                    size_info.append(media_type)
+                suffix = f" ({', '.join(size_info)})" if size_info else ""
+                desc = ""
+                media_desc = media.get("description") or ""
+                if isinstance(media_desc, str) and media_desc.strip():
+                    desc = f" — {_clean_text(media_desc)}"
+                media_lines.append(f"- {media_url}{suffix}{desc}")
+            if media_lines:
+                entry_lines.append("Медіа з <media:content>:")
+                entry_lines.extend(media_lines)
+
         entries_output.append("\n".join(entry_lines))
 
     return "\n\n".join(entries_output)
