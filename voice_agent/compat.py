@@ -195,3 +195,4 @@ def bootstrap() -> None:
     _ensure_importlib_compat()
     _patch_aiohttp_proxy_kwarg()
     _patch_livekit_room_event()
+    _patch_google_realtime_autostart()
