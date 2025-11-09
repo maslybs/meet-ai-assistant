@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from .resources import read_instructions
+from .tools import rss
 
 
 try:
@@ -48,6 +49,8 @@ def load_config() -> AgentConfig:
         prompt_path = Path(os.getenv("VOICE_AGENT_PROMPT_FILE", "prompt.md"))
         instructions = read_instructions(prompt_path)
 
+    instructions = _append_rss_catalog_section(instructions)
+
     search_flag = os.getenv("GEMINI_ENABLE_SEARCH")
 
     return AgentConfig(
@@ -75,3 +78,40 @@ def _resolve_voice_override(default: Optional[str] = None) -> str:
         return default.strip()
     return "Achernar"
 
+
+_RSS_CATALOG_HEADER = "### Каталог RSS із rss_feeds.json"
+
+
+def _append_rss_catalog_section(instructions: str) -> str:
+    """
+    Ensure the base prompt always contains the current RSS catalog so the LLM
+    never invents feed URLs or categories.
+    """
+
+    catalog_text = rss.describe_feed_catalog().strip()
+    if not catalog_text:
+        return instructions
+
+    if _RSS_CATALOG_HEADER in instructions:
+        return instructions
+
+    advisory = (
+        "Коли розповідаєш новини, спочатку перелічи категорії нижче і "
+        "використовуй ТІЛЬКИ наведені ID або URL. Якщо потрібної категорії "
+        "нема, повідом про це й запропонуй вибрати з каталогу. Коли користувач "
+        "просить змінити стрічку, вибери відповідну категорію саме за її title "
+        "та description і підстав її URL або ID у виклик fetch_rss_news."
+    )
+    base_text = instructions.rstrip()
+    section_lines = [
+        base_text,
+        "",
+        _RSS_CATALOG_HEADER,
+        advisory,
+        catalog_text,
+    ] if base_text else [
+        _RSS_CATALOG_HEADER,
+        advisory,
+        catalog_text,
+    ]
+    return "\n".join(section_lines)
