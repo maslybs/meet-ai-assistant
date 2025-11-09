@@ -1,42 +1,158 @@
 import asyncio
 import functools
+import json
+import logging
 import os
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterable, List
 
 from html import unescape
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 
+_DEFAULT_CATALOG_PATH = Path(__file__).resolve().parent.parent / "data" / "rss_feeds.json"
+_CATALOG_ENV_VAR = "VOICE_AGENT_RSS_CATALOG_FILE"
+_RSS_LOGGER = logging.getLogger("voice-agent.rss")
+
+_FEED_CACHE: List[dict[str, Any]] | None = None
+_FEED_CACHE_PATH: Path | None = None
+
+
+def _read_catalog_file(path: Path) -> list[dict[str, Any]]:
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        _RSS_LOGGER.warning("RSS catalog file '%s' не знайдено. Використовую стандартну стрічку.", path)
+        return []
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        _RSS_LOGGER.warning("Невалідний JSON у каталозі RSS '%s': %s", path, exc)
+        return []
+    if not isinstance(data, list):
+        _RSS_LOGGER.warning("Каталог RSS має бути списком об'єктів. Файл '%s' проігноровано.", path)
+        return []
+    entries: list[dict[str, Any]] = []
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            _RSS_LOGGER.debug("Пропускаю запис #%s у каталозі RSS: не словник.", idx)
+            continue
+        url = str(item.get("url", "")).strip()
+        if not url:
+            _RSS_LOGGER.debug("Пропускаю запис #%s у каталозі RSS: немає 'url'.", idx)
+            continue
+        entry = {
+            "id": str(item.get("id") or item.get("key") or f"feed_{idx}").strip(),
+            "title": str(item.get("title") or item.get("name") or "RSS стрічка").strip(),
+            "description": str(item.get("description") or "").strip(),
+            "url": url,
+            "aliases": [alias.strip() for alias in item.get("aliases", []) if isinstance(alias, str)],
+        }
+        entries.append(entry)
+    return entries
+
+
+def _load_feed_catalog() -> list[dict[str, Any]]:
+    global _FEED_CACHE, _FEED_CACHE_PATH
+
+    catalog_override = os.getenv(_CATALOG_ENV_VAR, "").strip()
+    path = Path(catalog_override).expanduser() if catalog_override else _DEFAULT_CATALOG_PATH
+
+    if _FEED_CACHE is not None and _FEED_CACHE_PATH == path:
+        return _FEED_CACHE
+
+    catalog = _read_catalog_file(path)
+    if not catalog:
+        catalog = [
+            {
+                "id": "headlines",
+                "title": "Головні новини",
+                "description": "Усі оперативні матеріали 24 Каналу.",
+                "url": "https://24tv.ua/rss/all.xml",
+                "aliases": ["новини"],
+            }
+        ]
+
+    _FEED_CACHE = catalog
+    _FEED_CACHE_PATH = path
+    return catalog
+
+
+def _normalize_token(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", value.strip())
+    return cleaned.casefold()
+
+
+def _match_catalog_entry(candidate: str, catalog: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
+    normalized = _normalize_token(candidate)
+    for entry in catalog:
+        identifiers = [entry.get("id", ""), entry.get("title", "")]
+        identifiers.extend(entry.get("aliases", []) or [])
+        for identifier in identifiers:
+            if not identifier:
+                continue
+            if _normalize_token(identifier) == normalized:
+                return entry
+    return None
+
+
+def describe_feed_catalog() -> str:
+    catalog = _load_feed_catalog()
+    if not catalog:
+        return (
+            "Озвучує останні новини з RSS. Обов'язково передай аргумент feed_url як "
+            "повний URL (https://...) або ідентифікатор із каталогу."
+        )
+
+    lines = [
+        "Зачитує останні публікації з підготовленого каталогу RSS. "
+        "Обов'язково вкажи аргумент feed_url як повний URL або ідентифікатор з переліку:",
+    ]
+    for entry in catalog:
+        description = f" — {entry['description']}" if entry.get("description") else ""
+        lines.append(f"- {entry['title']} (`{entry.get('id', '')}`) → {entry['url']}{description}")
+    lines.append(
+        f"Редагуй каталог у файлі {os.getenv(_CATALOG_ENV_VAR, str(_DEFAULT_CATALOG_PATH))}."
+    )
+    return "\n".join(lines)
+
+
 async def fetch_rss_news(_: Any, feed_url: str = "", limit: int | str = 3) -> str:
-    """Fetch and summarise entries from an RSS feed."""
+    """Fetch and summarise entries from an RSS feed defined in the catalog."""
 
     try:
         import feedparser  # type: ignore
     except ImportError:
         return "Модуль для читання RSS наразі не встановлений."
 
-    feed_url_value = feed_url.strip() if isinstance(feed_url, str) else ""
-    env_feed_default = os.getenv("VOICE_AGENT_RSS_FEED", "").strip()
-    allow_override_raw = os.getenv("VOICE_AGENT_RSS_ALLOW_OVERRIDE", "").strip().lower()
-    allow_override = allow_override_raw not in {"", "0", "false", "no"}
-    if env_feed_default:
-        if not allow_override:
-            feed_url_value = env_feed_default
-        elif not feed_url_value:
-            feed_url_value = env_feed_default
-    if not feed_url_value:
-        return "Будь ласка, надайте повний URL RSS-стрічки або встановіть VOICE_AGENT_RSS_FEED."
+    catalog = _load_feed_catalog()
+    feed_arg = feed_url.strip() if isinstance(feed_url, str) else ""
+    target_url = ""
 
-    env_limit_raw = os.getenv("VOICE_AGENT_RSS_LIMIT", "").strip()
+    if feed_arg:
+        if feed_arg.lower().startswith(("http://", "https://")):
+            target_url = feed_arg
+        else:
+            entry = _match_catalog_entry(feed_arg, catalog)
+            if entry:
+                target_url = entry["url"]
+            else:
+                return (
+                    f"Не впізнала категорію '{feed_arg}'. Ось доступні варіанти:\n{describe_feed_catalog()}"
+                )
+
+    if not target_url:
+        return (
+            "Не вдалося визначити RSS-стрічку. Назви категорію з каталогу або передай повний RSS-URL.\n"
+            f"{describe_feed_catalog()}"
+        )
 
     def _resolve_limit(raw: int | str | None) -> int:
         candidate: int | str | None = raw
-        if not allow_override or (candidate is None or candidate == ""):
-            candidate = env_limit_raw or candidate
         if candidate in ("", None):
-            candidate = 3
+            candidate = os.getenv("VOICE_AGENT_RSS_LIMIT", "").strip() or 3
         try:
             value = int(candidate)  # type: ignore[arg-type]
         except (TypeError, ValueError):
@@ -56,7 +172,7 @@ async def fetch_rss_news(_: Any, feed_url: str = "", limit: int | str = 3) -> st
             ),
             "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
         }
-        req = urllib_request.Request(feed_url_value, headers=headers)
+        req = urllib_request.Request(target_url, headers=headers)
         with urllib_request.urlopen(req, timeout=15) as response:
             return response.read()
 

@@ -68,6 +68,7 @@ class GeminiVisionAgent(AgentBase):
         self, _: RunContext, feed_url: str = "", limit: int | str = 3
     ) -> str:
         return await rss.fetch_rss_news(None, feed_url=feed_url, limit=limit)
+    fetch_rss_news.__doc__ = rss.describe_feed_catalog()
 
     @function_tool
     async def google_search_api(self, _: RunContext, query: str, limit: int | str = 5) -> str:
