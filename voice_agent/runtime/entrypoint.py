@@ -120,9 +120,8 @@ def _create_participant_greeter(
                 "RoomIO switched to broadcast mode; agent listening to all participants."
             )
 
-    greeting_text = (
-        "Привітай користувача, ввічливо назви себе Ганною та коротко запропонуй допомогу"
-    )
+    # UPDATED: Literal greeting string for "Say exactly" prompt
+    greeting_text = "Привіт! Я Ганна. Чим можу допомогти?"
 
     greeter = ParticipantGreeter(
         ctx=ctx,

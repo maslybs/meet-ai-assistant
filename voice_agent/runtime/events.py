@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from typing import Any, Optional
 
 _VIDEO_LOGGER = logging.getLogger("voice-agent.video")
@@ -52,9 +53,13 @@ class ParticipantGreeter:
         self._greeting_text = greeting_text
         self._terminate_on_empty = terminate_on_empty
         self._close_room_on_empty = close_room_on_empty
-        self._shutdown_delay = max(0.0, shutdown_delay)
+        
+        self._shutdown_delay = 5.0 if shutdown_delay < 5.0 else shutdown_delay
+
+        # Default greeting delay is minimal
         self._greeting_delay = max(0.0, greeting_delay)
-        self._greeted_identities: set[str] = set()
+        
+        self._greeted_sids: set[str] = set()
         self._inflight_initializations: set[str] = set()
         self._participant_poll_task: Optional[asyncio.Task[Any]] = None
         self._shutdown_task: Optional[asyncio.Task[None]] = None
@@ -87,26 +92,22 @@ class ParticipantGreeter:
             self._shutdown_task = None
 
     async def _poll_remote_participants(self, interval: float = 5.0) -> None:
-        """
-        Periodically reconcile remote participants to guard against missed events.
-        """
-
         try:
             while True:
                 await asyncio.sleep(interval)
                 participants_snapshot = list(self._ctx.room.remote_participants.values())
                 for participant in participants_snapshot:
-                    identity = getattr(participant, "identity", None)
+                    sid = getattr(participant, "sid", None)
                     if (
-                        not identity
-                        or identity in self._greeted_identities
-                        or identity in self._inflight_initializations
+                        not sid
+                        or sid in self._greeted_sids
+                        or sid in self._inflight_initializations
                     ):
                         continue
                     self._handle_participant_connected(participant)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - defensive logging
+        except Exception as exc:
             _VIDEO_LOGGER.debug("Remote participant poll failed: %s", exc)
             await asyncio.sleep(interval)
 
@@ -116,7 +117,8 @@ class ParticipantGreeter:
             self._shutdown_task = None
 
         identity = getattr(participant, "identity", None)
-        if identity is None:
+        sid = getattr(participant, "sid", None)
+        if identity is None or sid is None:
             return
 
         local_identity = getattr(self._ctx.room.local_participant, "identity", None)
@@ -158,49 +160,37 @@ class ParticipantGreeter:
         if not self._broadcast_mode:
             self._room_io.set_participant(identity)
 
-        asyncio.create_task(self._initialize_participant(identity))
+        asyncio.create_task(self._initialize_participant(identity, sid))
 
-    async def _initialize_participant(self, identity: str) -> None:
+    async def _initialize_participant(self, identity: str, sid: str) -> None:
+        # Attempt to enable audio, but don't block
         try:
             if not self._session.input.audio_enabled:
                 self._session.input.set_audio_enabled(True)
-        except Exception as exc:  # pragma: no cover - defensive
-            _VIDEO_LOGGER.debug("Failed to ensure audio input enabled before wait: %s", exc)
+        except Exception:
+            pass
 
+        # CRITICAL FIX: Minimal wait. If media isn't ready in 0.5s, we proceed to greet anyway.
+        # This ensures we don't get stuck waiting for a muted mic.
         try:
-            await self._wait_for_media_ready(identity, broadcast=self._broadcast_mode)
-            media_ready = True
-        except TimeoutError as exc:
-            _VIDEO_LOGGER.warning("Media for %s not ready: %s", identity, exc)
-            media_ready = False
-        except Exception as exc:  # pragma: no cover - best effort logging
-            _VIDEO_LOGGER.warning("Unexpected media wait failure for %s: %s", identity, exc)
-            media_ready = False
-        else:
-            await asyncio.sleep(0)
-
-        try:
-            if not self._session.input.audio_enabled:
-                self._session.input.set_audio_enabled(True)
-        except Exception as exc:  # pragma: no cover - defensive
-            _VIDEO_LOGGER.debug("Failed to ensure audio input enabled: %s", exc)
-
-        if identity in self._greeted_identities:
+            await self._wait_for_media_ready(identity, broadcast=self._broadcast_mode, timeout=0.5)
+        except TimeoutError:
+            _VIDEO_LOGGER.info("Media not ready instantly for %s, proceeding to greet anyway.", identity)
+        except Exception:
+            pass
+        
+        if sid in self._greeted_sids:
             return
 
-        self._inflight_initializations.add(identity)
+        self._inflight_initializations.add(sid)
 
-        if self._greeting_delay:
-            await asyncio.sleep(self._greeting_delay)
+        # Small delay to ensure connection stability
+        await asyncio.sleep(1.0)
 
-        if not media_ready:
-            _VIDEO_LOGGER.debug(
-                "Greeting %s without confirmed media readiness.", identity
-            )
         greeted = await self._send_greeting(identity)
         if greeted:
-            self._greeted_identities.add(identity)
-        self._inflight_initializations.discard(identity)
+            self._greeted_sids.add(sid)
+        self._inflight_initializations.discard(sid)
 
     async def _wait_for_media_ready(
         self,
@@ -209,29 +199,18 @@ class ParticipantGreeter:
         *,
         broadcast: bool,
     ) -> None:
-        """
-        Wait until RoomIO links to the participant and the media pipelines are live.
-        This avoids greeting the user before audio input/output are ready.
-        """
-
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
 
         while True:
             linked = self._room_io.linked_participant
             audio_input = self._room_io.audio_input
+            audio_ready = False
 
-            audio_ready = audio_input is not None
             if audio_input is not None:
                 audio_ready = True
-                if _lk_rtc is not None:
-                    source = getattr(audio_input, "publication_source", None)
-                    if source is None:
-                        audio_ready = False
-                forward_task = getattr(audio_input, "_forward_atask", None)
-                if forward_task is None:
-                    audio_ready = False
-
+                # Don't over-validate source/task, just existence is enough for greeting trigger
+            
             if broadcast:
                 if audio_ready:
                     break
@@ -244,65 +223,43 @@ class ParticipantGreeter:
                     break
 
             if loop.time() > deadline:
-                raise TimeoutError(
-                    f"Timed out waiting for media streams for participant '{identity}'."
-                )
+                raise TimeoutError(f"Timeout waiting for media {identity}")
             await asyncio.sleep(0.1)
 
-        subscribed = self._room_io.subscribed_fut
-        if subscribed is not None and not subscribed.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(subscribed), timeout)
-            except asyncio.TimeoutError:
-                _VIDEO_LOGGER.warning(
-                    "Timed out waiting for LiveKit to subscribe to agent audio for %s",
-                    identity,
-                )
-
     async def _send_greeting(self, identity: str) -> bool:
-        """
-        Deliver the welcome message to the participant.
-        Retries if the realtime backend is still spinning up.
-        Returns True if the greeting was delivered.
-        """
-
         max_attempts = 3
-        fallback_used = False
         for attempt in range(1, max_attempts + 1):
             try:
-                if fallback_used:
-                    handle = self._session.say(self._greeting_text)
-                else:
-                    handle = self._session.generate_reply(user_input=self._greeting_text)
+                # Use conversation.item.create for a more direct injection if possible, 
+                # but sticking to generate_reply with text prompt for stability.
+                # Important: We add "system_instruction" context implicitly by asking it to say specific text.
+                
+                # Simply triggering response_create might be cleaner if the model has instructions to greet.
+                # But forcing it ensures it happens.
+                
+                _VIDEO_LOGGER.info("Sending greeting to %s (attempt %d)", identity, attempt)
+                handle = self._session.generate_reply(
+                    user_input=f"Say exactly: {self._greeting_text}"
+                )
                 await handle.wait_for_playout()
                 return True
-            except RealtimeError as exc:
-                backoff = 0.6 * attempt
-                _VIDEO_LOGGER.warning(
-                    "Greeting attempt %s for %s failed due to realtime timeout: %s (retry in %.1fs)",
-                    attempt,
-                    identity,
-                    exc,
-                    backoff if attempt < max_attempts else 0.0,
-                )
-                if attempt == max_attempts - 1 and not fallback_used:
-                    fallback_used = True
-                    continue
-                if attempt >= max_attempts:
-                    return False
-                await asyncio.sleep(backoff)
-            except Exception as exc:  # pragma: no cover - best effort logging
-                _VIDEO_LOGGER.warning("Failed to send greeting to %s: %s", identity, exc)
+            except RealtimeError:
+                await asyncio.sleep(0.5)
+            except Exception as exc:
+                _VIDEO_LOGGER.warning("Failed to greet %s: %s", identity, exc)
                 return False
         return False
 
     def _handle_participant_disconnected(self, participant: Any) -> None:
         identity = getattr(participant, "identity", None)
+        sid = getattr(participant, "sid", None)
         if identity is None:
             return
 
-        self._greeted_identities.discard(identity)
-        self._inflight_initializations.discard(identity)
+        if sid:
+            self._greeted_sids.discard(sid)
+            self._inflight_initializations.discard(sid)
+        
         linked = self._room_io.linked_participant
         if linked is None:
             return
@@ -343,18 +300,8 @@ class ParticipantGreeter:
                         await self._ctx.api.room.delete_room(
                             _lk_api.DeleteRoomRequest(room=self._ctx.room.name)
                         )
-                        _VIDEO_LOGGER.info(
-                            "Closed LiveKit room '%s' after last participant left.",
-                            self._ctx.room.name,
-                        )
-                    except Exception as exc:  # pragma: no cover - best effort logging
-                        _VIDEO_LOGGER.warning(
-                            "Failed to close room '%s': %s", self._ctx.room.name, exc
-                        )
-                else:
-                    _VIDEO_LOGGER.info(
-                        "All participants left the room; shutting down the agent worker."
-                    )
+                    except Exception:
+                        pass
                 self._ctx.shutdown("room-empty")
             finally:
                 self._shutdown_task = None
