@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Any, Optional
 
+from livekit import rtc
 from ..agent import GeminiVisionAgent, LIVEKIT_IMPORT_ERROR
 from ..config import AgentConfig, load_config, _is_truthy
 from ..compat import bootstrap as bootstrap_compat
@@ -99,6 +100,7 @@ def _resolve_greeting_delay(job_metadata: dict[str, Any]) -> float:
 def _create_participant_greeter(
     ctx: Any,
     session_artifacts: SessionArtifacts,
+    job_metadata: dict[str, Any],
     *,
     broadcast_mode: bool,
     terminate_on_empty: bool,
@@ -120,8 +122,12 @@ def _create_participant_greeter(
                 "RoomIO switched to broadcast mode; agent listening to all participants."
             )
 
-    # UPDATED: Literal greeting string for "Say exactly" prompt
-    greeting_text = "Привіт! Я Ганна. Чим можу допомогти?"
+    # Determine greeting based on mode
+    mode = job_metadata.get("greetingMode")
+    if mode == "resume":
+        greeting_text = "Я знову тут. Слухаю вас."
+    else:
+        greeting_text = "Привіт! Я Ганна. Чим можу допомогти?"
 
     greeter = ParticipantGreeter(
         ctx=ctx,
@@ -187,6 +193,7 @@ async def run_job(ctx: Any) -> None:
     _create_participant_greeter(
         ctx,
         session_artifacts,
+        job_metadata,
         broadcast_mode=broadcast_mode,
         terminate_on_empty=terminate_on_empty,
         close_room_on_empty=close_room_on_empty,
