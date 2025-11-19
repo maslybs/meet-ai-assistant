@@ -39,15 +39,16 @@ class GeminiVisionAgent(AgentBase):
         super().__init__(instructions=instructions)
         self._video_toggle_lock = asyncio.Lock()
 
-    @function_tool
-    async def enable_video_feed(self, _: RunContext) -> str:
-        async with self._video_toggle_lock:
-            return await video.enable_video_feed(self)
+    # Video tools commented out to prevent hallucinations about controlling user hardware
+    # @function_tool
+    # async def enable_video_feed(self, _: RunContext) -> str:
+    #     async with self._video_toggle_lock:
+    #         return await video.enable_video_feed(self)
 
-    @function_tool
-    async def disable_video_feed(self, _: RunContext) -> str:
-        async with self._video_toggle_lock:
-            return await video.disable_video_feed(self)
+    # @function_tool
+    # async def disable_video_feed(self, _: RunContext) -> str:
+    #     async with self._video_toggle_lock:
+    #         return await video.disable_video_feed(self)
 
     @function_tool
     async def current_time_utc_plus3(self, _: RunContext) -> str:
