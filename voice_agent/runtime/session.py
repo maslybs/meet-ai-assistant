@@ -1,9 +1,11 @@
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
-from ..config import AgentConfig, _resolve_voice_override, _is_truthy
+from ..resources import read_instructions
+from ..config import AgentConfig, _resolve_voice_override, _is_truthy, _append_rss_catalog_section
 
 _GEMINI_LOGGER = logging.getLogger("voice-agent.gemini")
 _VIDEO_LOGGER = logging.getLogger("voice-agent.video")
@@ -48,6 +50,19 @@ def derive_session_settings(
 
     instructions_override = job_metadata.get("instructions")
     model_override = job_metadata.get("model")
+    
+    # Language-aware instructions loading
+    language = job_metadata.get("language", "uk")
+    if not instructions_override:
+        if language == "en":
+            prompt_path = Path("prompt_en.md")
+            if prompt_path.exists():
+                try:
+                    instructions_override = read_instructions(prompt_path)
+                    instructions_override = _append_rss_catalog_section(instructions_override)
+                    _GEMINI_LOGGER.info("Loaded English instructions from prompt_en.md")
+                except Exception as exc:
+                    _GEMINI_LOGGER.warning("Failed to load English prompt: %s", exc)
 
     effective_instructions = (
         (instructions_override or base_config.instructions).strip() or base_config.instructions
