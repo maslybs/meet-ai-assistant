@@ -1,0 +1,22 @@
+[
+  {
+    "id": "ukr_radio_all",
+    "title": "Українське радіо — загальна RSS-стрічка",
+    "description": "Останні епізоди з каналу або вибраного набору програм.",
+    "url": "https://PASTE_RSS_URL_HERE",
+    "page_url": "https://ukr-radio.bgdn.dev/programs/",
+    "aliases": ["загальна стрічка", "новини радіо", "останні епізоди"],
+    "kind": "channel",
+    "source": "ukr-radio.bgdn.dev"
+  },
+  {
+    "id": "music",
+    "title": "Музика",
+    "description": "Власна RSS-стрічка з музичними програмами, зібрана через builder.",
+    "url": "https://PASTE_CUSTOM_RSS_URL_FROM_BUILDER_HERE",
+    "page_url": "https://ukr-radio.bgdn.dev/builder/",
+    "aliases": ["музика", "послухати музику", "музична передача"],
+    "kind": "custom",
+    "source": "ukr-radio.bgdn.dev"
+  }
+]

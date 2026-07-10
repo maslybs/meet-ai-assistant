@@ -8,6 +8,7 @@ from ..agent import GeminiVisionAgent, LIVEKIT_IMPORT_ERROR
 from ..config import AgentConfig, load_config, _is_truthy
 from ..compat import bootstrap as bootstrap_compat
 from .events import ParticipantGreeter
+from .radio_playback import RadioPlaybackController
 from .session import (
     SessionArtifacts,
     SessionSettings,
@@ -122,12 +123,20 @@ def _create_participant_greeter(
                 "RoomIO switched to broadcast mode; agent listening to all participants."
             )
 
-    # Determine greeting based on mode
+    # Determine greeting based on mode and language
+    language = job_metadata.get("language", "uk")
     mode = job_metadata.get("greetingMode")
-    if mode == "resume":
-        greeting_text = "Я знову тут. Слухаю вас."
+    
+    if language == "en":
+        if mode == "resume":
+            greeting_text = "I'm back. Listening to you."
+        else:
+            greeting_text = "Hi! I'm Hanna. How can I help you?"
     else:
-        greeting_text = "Привіт! Я Ганна. Чим можу допомогти?"
+        if mode == "resume":
+            greeting_text = "Я знову тут. Слухаю вас."
+        else:
+            greeting_text = "Привіт! Я Ганна. Чим можу допомогти?"
 
     greeter = ParticipantGreeter(
         ctx=ctx,
@@ -167,7 +176,11 @@ async def run_job(ctx: Any) -> None:
     )
 
     session_artifacts = build_agent_session(settings)
-    agent = GeminiVisionAgent(instructions=settings.instructions)
+    radio_playback = RadioPlaybackController(ctx.room, session=session_artifacts.session)
+    agent = GeminiVisionAgent(
+        instructions=settings.instructions,
+        radio_playback=radio_playback,
+    )
 
     await session_artifacts.session.start(
         agent=agent,
@@ -186,6 +199,7 @@ async def run_job(ctx: Any) -> None:
     greeting_delay = _resolve_greeting_delay(job_metadata)
 
     async def _stop_session(_: str) -> None:
+        await radio_playback.aclose()
         await session_artifacts.session.aclose()
 
     ctx.add_shutdown_callback(_stop_session)

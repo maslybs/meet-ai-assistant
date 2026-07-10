@@ -1,16 +1,16 @@
 [
   {
-    "id": "headlines",
+    "id": "24tv",
     "title": "24 Канал: Новини",
     "description": "Усі оперативні новини 24 Каналу.",
     "url": "https://24tv.ua/rss/all.xml?googleFlg=true&tagId=1117",
-    "aliases": ["новини", "головні новини", "стрічка"]
+    "aliases": ["24 канал", "24tv", "двадцять чотири канал", "новини 24", "головні новини"]
   },
   {
-    "id": "headlines",
+    "id": "pravda",
     "title": "Українська правда: новини",
-    "description": "Стрічка новин української правди",
+    "description": "Стрічка новин Української правди.",
     "url": "https://www.pravda.com.ua/rss/view_news/",
-    "aliases": ["Українська правда"]
+    "aliases": ["Українська правда", "уп", "pravda"]
   }
 ]

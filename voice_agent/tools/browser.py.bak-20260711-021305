@@ -374,156 +374,61 @@ async def _fetch_via_playwright(
 
 
 async def _extract_markdown_content(page: Any) -> str:
-    """Extract clean article-like page content, preserving title/source and avoiding menus/ads/footer noise."""
-
+    """Extract page content as Markdown with links preserved."""
+    
     try:
-        extracted = await page.evaluate(
-            """() => {
-                const clean = (value) => (value || '').replace(/\s+/g, ' ').trim();
-                const meta = (selector) => {
-                    const el = document.querySelector(selector);
-                    return clean(el ? el.content || el.getAttribute('content') || '' : '');
-                };
-
-                const title = clean(
-                    meta('meta[property="og:title"]') ||
-                    meta('meta[name="twitter:title"]') ||
-                    document.title ||
-                    ''
-                );
-                const description = clean(
-                    meta('meta[name="description"]') ||
-                    meta('meta[property="og:description"]') ||
-                    meta('meta[name="twitter:description"]') ||
-                    ''
-                );
-                const published = clean(
-                    meta('meta[property="article:published_time"]') ||
-                    meta('meta[name="date"]') ||
-                    meta('meta[itemprop="datePublished"]') ||
-                    ''
-                );
-
-                let jsonLdBodies = [];
-                for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
-                    try {
-                        const parsed = JSON.parse(script.textContent || '');
-                        const nodes = Array.isArray(parsed) ? parsed : [parsed, ...(parsed['@graph'] || [])];
-                        for (const node of nodes) {
-                            if (!node || typeof node !== 'object') continue;
-                            const body = node.articleBody || node.text;
-                            if (typeof body === 'string' && clean(body).length > 300) jsonLdBodies.push(clean(body));
-                        }
-                    } catch (_) {}
+        # Get page title and URL
+        title = await page.title() or ""
+        current_url = page.url
+        
+        # Extract links with their text
+        links_data = await page.evaluate("""() => {
+            const links = [];
+            document.querySelectorAll('a[href]').forEach((a, idx) => {
+                const text = a.innerText.trim();
+                const href = a.href;
+                if (text && href && !href.startsWith('javascript:') && text.length < 200) {
+                    links.push({text: text, href: href});
                 }
-
-                const selectors = [
-                    'article [itemprop="articleBody"]',
-                    '[itemprop="articleBody"]',
-                    'article .post_text',
-                    '.post_text',
-                    'article .article__text',
-                    '.article__text',
-                    'article .article_text',
-                    '.article_text',
-                    'article .article-content',
-                    '.article-content',
-                    'article .article__content',
-                    '.article__content',
-                    'article .news-text',
-                    '.news-text',
-                    'article .news_text',
-                    '.news_text',
-                    'article .text',
-                    'article .content',
-                    'main article',
-                    'article',
-                    'main'
-                ];
-
-                const cloneAndCleanText = (el) => {
-                    if (!el) return '';
-                    const clone = el.cloneNode(true);
-                    clone.querySelectorAll('script, style, noscript, iframe, nav, header, footer, aside, form, button, input, textarea, select, svg, canvas, video, audio, .advert, .advertisement, .ads, .ad, .banner, .cookie, .cookies, .comments, .comment, .subscribe, .subscription, .social, .share, .related, .read-also, .recommend, .weather, .footer, .header, .nav').forEach(n => n.remove());
-                    return clean(clone.innerText || clone.textContent || '');
-                };
-
-                let candidates = [];
-                for (const selector of selectors) {
-                    for (const el of document.querySelectorAll(selector)) {
-                        const text = cloneAndCleanText(el);
-                        if (text.length > 300) candidates.push({ selector, text, length: text.length });
-                    }
-                }
-                candidates.sort((a, b) => b.length - a.length);
-
-                let body = jsonLdBodies.sort((a, b) => b.length - a.length)[0] || '';
-                if (!body && candidates.length) body = candidates[0].text;
-                if (!body) body = cloneAndCleanText(document.body);
-
-                const links = [];
-                document.querySelectorAll('a[href]').forEach((a) => {
-                    const text = clean(a.innerText || a.textContent || '');
-                    const href = a.href;
-                    if (text && href && !href.startsWith('javascript:') && text.length < 160) {
-                        links.push({ text, href });
-                    }
-                });
-
-                return {
-                    url: location.href,
-                    title,
-                    description,
-                    published,
-                    body,
-                    links: links.slice(0, 60),
-                    source_selector: candidates.length ? candidates[0].selector : (jsonLdBodies.length ? 'json-ld' : 'body')
-                };
-            }"""
-        )
-
-        if not isinstance(extracted, dict):
-            return ""
-
+            });
+            return links.slice(0, 100);  // Limit to 100 links
+        }""")
+        
+        # Get main text content
+        main_text = await page.inner_text("body")
+        main_text = re.sub(r"\s+", " ", main_text).strip()
+        
+        # Build Markdown output
         parts = []
-        title = str(extracted.get("title") or "").strip()
-        current_url = str(extracted.get("url") or page.url or "").strip()
-        description = str(extracted.get("description") or "").strip()
-        published = str(extracted.get("published") or "").strip()
-        body = str(extracted.get("body") or "").strip()
-        links_data = extracted.get("links") or []
-
-        if title:
-            parts.append(f"Title: {title}")
-        if current_url:
-            parts.append(f"URL Source: {current_url}")
-        if published:
-            parts.append(f"Опубліковано: {published}")
-        if description:
-            parts.append(description)
-        if body:
-            parts.append(body)
-
-        if isinstance(links_data, list):
+        parts.append(f"Title: {title}")
+        parts.append(f"URL Source: {current_url}")
+        parts.append("")
+        parts.append("Markdown Content:")
+        parts.append(f"# {title}")
+        parts.append("")
+        
+        # Add main content (truncated)
+        if main_text:
+            parts.append(main_text[:3000])
+        
+        # Add links section
+        if links_data:
+            parts.append("")
+            parts.append("---")
+            parts.append("## Посилання на сторінці:")
             seen_hrefs = set()
-            link_lines = []
             for link in links_data:
-                if not isinstance(link, dict):
-                    continue
-                href = str(link.get("href") or "").strip()
-                text = str(link.get("text") or "").replace("\n", " ").strip()
+                href = link.get("href", "")
+                text = link.get("text", "").replace("\n", " ").strip()
                 if href and href not in seen_hrefs and text:
                     seen_hrefs.add(href)
-                    link_lines.append(f"- [{text}]({href})")
-            if link_lines:
-                parts.append("---")
-                parts.append("## Посилання на сторінці:")
-                parts.extend(link_lines)
-
-        return "\n".join(parts).strip()
-
+                    parts.append(f"- [{text}]({href})")
+        
+        return "\n".join(parts)
+        
     except Exception as exc:
-        _BROWSER_LOGGER.warning("Failed to extract clean article content: %s", exc)
+        _BROWSER_LOGGER.warning("Failed to extract markdown content: %s", exc)
+        # Fallback to simple text extraction
         try:
             return await page.inner_text("body")
         except Exception:

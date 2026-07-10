@@ -9,6 +9,7 @@ __all__ = [
     "browser",
     "search",
     "rss",
+    "radio",
     "time_tools",
     "video",
 ]

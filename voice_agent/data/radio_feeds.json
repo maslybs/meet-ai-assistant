@@ -1,0 +1,52 @@
+[
+  {
+    "id": "ukr_radio_all",
+    "title": "Українське радіо — загальна RSS-стрічка",
+    "description": "Останні епізоди каналу Українське радіо: новини, програми, розмовні передачі.",
+    "url": "https://ukr-radio.bgdn.dev/feed.xml?channelID=1",
+    "page_url": "https://ukr-radio.bgdn.dev/programs/?channelID=1",
+    "aliases": ["українське радіо", "загальна стрічка", "загальна rss", "останні епізоди", "новини українського радіо", "новини радіо", "радіо новини"],
+    "kind": "channel",
+    "source": "ukr-radio.bgdn.dev"
+  },
+  {
+    "id": "ukr_radio_news",
+    "title": "Українське радіо — Новини",
+    "description": "Окрема RSS-стрічка програми Новини на Українському радіо.",
+    "url": "https://ukr-radio.bgdn.dev/feed.xml?ids=289",
+    "page_url": "https://ukr-radio.bgdn.dev/programs/?channelID=1",
+    "aliases": ["новини", "останні новини", "що в новинах", "послухати новини"],
+    "kind": "program",
+    "source": "ukr-radio.bgdn.dev"
+  },
+  {
+    "id": "promin_all",
+    "title": "Радіо Промінь — загальна RSS-стрічка",
+    "description": "Останні епізоди Радіо Промінь, зокрема музичні та розважальні програми.",
+    "url": "https://ukr-radio.bgdn.dev/feed.xml?channelID=2",
+    "page_url": "https://ukr-radio.bgdn.dev/programs/?channelID=2",
+    "aliases": ["промінь", "радіо промінь", "музика", "послухати музику", "музична передача", "увімкни музику"],
+    "kind": "channel",
+    "source": "ukr-radio.bgdn.dev"
+  },
+  {
+    "id": "culture_all",
+    "title": "Радіо Культура — загальна RSS-стрічка",
+    "description": "Останні епізоди Радіо Культура: культура, література, історія, мистецтво.",
+    "url": "https://ukr-radio.bgdn.dev/feed.xml?channelID=3",
+    "page_url": "https://ukr-radio.bgdn.dev/programs/?channelID=3",
+    "aliases": ["культура", "радіо культура", "культурна передача", "історія", "література"],
+    "kind": "channel",
+    "source": "ukr-radio.bgdn.dev"
+  },
+  {
+    "id": "rui_all",
+    "title": "Radio Ukraine International — загальна RSS-стрічка",
+    "description": "Останні епізоди Radio Ukraine International.",
+    "url": "https://ukr-radio.bgdn.dev/feed.xml?channelID=4",
+    "page_url": "https://ukr-radio.bgdn.dev/programs/?channelID=4",
+    "aliases": ["radio ukraine international", "rui", "іномовлення"],
+    "kind": "channel",
+    "source": "ukr-radio.bgdn.dev"
+  }
+]

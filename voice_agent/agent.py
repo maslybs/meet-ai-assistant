@@ -1,7 +1,8 @@
 import asyncio
+import json
 from typing import Any, Optional
 
-from .tools import browser, rss, search, time_tools, video
+from .tools import browser, radio, rss, search, time_tools, video
 
 try:
     from livekit.agents import Agent as _AgentBase, RunContext as _RunContext
@@ -35,9 +36,10 @@ def function_tool(func):  # type: ignore[misc]
 class GeminiVisionAgent(AgentBase):
     """Agent that exposes a small set of reusable function tools."""
 
-    def __init__(self, *, instructions: str) -> None:
+    def __init__(self, *, instructions: str, radio_playback: Any = None) -> None:
         super().__init__(instructions=instructions)
         self._video_toggle_lock = asyncio.Lock()
+        self._radio_playback = radio_playback
 
     # Video tools commented out to prevent hallucinations about controlling user hardware
     # @function_tool
@@ -65,11 +67,123 @@ class GeminiVisionAgent(AgentBase):
         return await browser.browse_web_page(None, url, wait=wait, max_chars=max_chars)
 
     @function_tool
+    async def read_full_article(
+        self,
+        _: RunContext,
+        url: str,
+        max_chars: int | str = 100000,
+    ) -> str:
+        """Open a news article URL and extract the full readable article text without menus, footer, ads, or cookie banners."""
+        return await browser.browse_web_page(None, url=url, wait="domcontentloaded", max_chars=max_chars)
+
+    @function_tool
     async def fetch_rss_news(
         self, _: RunContext, feed_url: str = "", limit: int | str = 3
     ) -> str:
         return await rss.fetch_rss_news(None, feed_url=feed_url, limit=limit)
     fetch_rss_news.__doc__ = rss.describe_feed_catalog()
+
+    @function_tool
+    async def list_radio_feeds(self, _: RunContext) -> str:
+        """List configured radio/podcast RSS feeds that can be searched or played."""
+        return await radio.list_radio_feeds(None)
+
+    @function_tool
+    async def get_radio_episodes(
+        self,
+        _: RunContext,
+        feed: str,
+        limit: int | str = 5,
+    ) -> str:
+        """Read recent episodes from a configured radio RSS feed or a direct RSS URL."""
+        return await radio.get_radio_episodes(None, feed=feed, limit=limit)
+
+    @function_tool
+    async def search_radio_episodes(
+        self,
+        _: RunContext,
+        query: str,
+        feed: str = "",
+        limit: int | str = 5,
+    ) -> str:
+        """Search radio RSS episodes by title, description, program, channel, or topic."""
+        return await radio.search_radio_episodes(None, query=query, feed=feed, limit=limit)
+
+    @function_tool
+    async def play_radio_episode(
+        self,
+        _: RunContext,
+        feed: str,
+        query: str = "latest",
+    ) -> str:
+        """Find an episode in RSS and immediately play its audio in the room."""
+        resolved = await radio.resolve_radio_episode(None, feed=feed, query=query)
+        try:
+            payload = json.loads(resolved)
+        except Exception:
+            return resolved
+
+        audio_url = payload.get("audio_url") if isinstance(payload, dict) else ""
+        if not audio_url:
+            return resolved
+        if self._radio_playback is None:
+            return json.dumps(
+                {
+                    "action": "radio.play",
+                    "title": payload.get("title", ""),
+                    "audio_url": audio_url,
+                    "page_url": payload.get("page_url", ""),
+                    "message": "Playback controller is not attached; client should play audio_url.",
+                },
+                ensure_ascii=False,
+            )
+        return await self._radio_playback.play(
+            audio_url=audio_url,
+            title=payload.get("title", ""),
+            page_url=payload.get("page_url", ""),
+            metadata=payload,
+        )
+
+    @function_tool
+    async def play_audio_url(
+        self,
+        _: RunContext,
+        audio_url: str,
+        title: str = "Аудіо",
+        page_url: str = "",
+    ) -> str:
+        """Immediately play a direct audio URL, for example an RSS enclosure URL."""
+        if self._radio_playback is None:
+            return json.dumps(
+                {
+                    "action": "radio.play",
+                    "title": title,
+                    "audio_url": audio_url,
+                    "page_url": page_url,
+                    "message": "Playback controller is not attached; client should play audio_url.",
+                },
+                ensure_ascii=False,
+            )
+        return await self._radio_playback.play(
+            audio_url=audio_url,
+            title=title,
+            page_url=page_url,
+            metadata={"source": "direct"},
+        )
+
+    @function_tool
+    async def stop_radio_playback(self, _: RunContext) -> str:
+        """Stop currently playing radio, music, or podcast audio."""
+        if self._radio_playback is None:
+            return "Playback controller is not attached."
+        return await self._radio_playback.stop()
+
+    @function_tool
+    async def radio_playback_status(self, _: RunContext) -> str:
+        """Return current radio/music playback state."""
+        if self._radio_playback is None:
+            return "Playback controller is not attached."
+        return self._radio_playback.status_json()
 
     @function_tool
     async def google_search_api(self, _: RunContext, query: str, limit: int | str = 5) -> str:
