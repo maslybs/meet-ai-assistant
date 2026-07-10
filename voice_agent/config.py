@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from .resources import read_instructions
-from .tools import rss
+from .tools import radio, rss
 
 
 try:
@@ -50,6 +50,7 @@ def load_config() -> AgentConfig:
         instructions = read_instructions(prompt_path)
 
     instructions = _append_rss_catalog_section(instructions)
+    instructions = _append_radio_catalog_section(instructions)
 
     search_flag = os.getenv("GEMINI_ENABLE_SEARCH")
 
@@ -111,6 +112,47 @@ def _append_rss_catalog_section(instructions: str) -> str:
         catalog_text,
     ] if base_text else [
         _RSS_CATALOG_HEADER,
+        advisory,
+        catalog_text,
+    ]
+    result = "\n".join(section_lines)
+    article_advisory = (
+        "\n\n### Читання повних новинних статей\n"
+        "Коли користувач просить прочитати конкретну новину повністю, спочатку візьми link із RSS, "
+        "а потім викликай read_full_article(url=link, max_chars=100000). Не обмежуйся summary з RSS, "
+        "особливо для 24 Каналу, бо його RSS часто містить тільки короткий анонс. Для Української правди RSS "
+        "може містити content:encoded, але якщо користувач просить повністю або детально — усе одно відкрий link через read_full_article."
+    )
+    return result + article_advisory
+
+
+_RADIO_CATALOG_HEADER = "### Каталог радіо та аудіо RSS"
+
+
+def _append_radio_catalog_section(instructions: str) -> str:
+    catalog_text = radio.describe_radio_catalog().strip()
+    if not catalog_text:
+        return instructions
+    if _RADIO_CATALOG_HEADER in instructions:
+        return instructions
+
+    advisory = (
+        "Коли користувач просить послухати радіо, передачу, випуск, музику або аудіо з RSS, "
+        "не переказуй епізод замість програвання. Спочатку використай list_radio_feeds, "
+        "get_radio_episodes або search_radio_episodes, потім play_radio_episode або play_audio_url. "
+        "Поки аудіо грає, не говори поверх нього. Якщо користувач каже 'зупини', 'стоп', "
+        "'вимкни', викликай stop_radio_playback. Якщо у каталозі для потрібної стрічки ще немає URL, "
+        "скажи коротко, що треба додати RSS URL у voice_agent/data/radio_feeds.json або передати прямий RSS URL."
+    )
+    base_text = instructions.rstrip()
+    section_lines = [
+        base_text,
+        "",
+        _RADIO_CATALOG_HEADER,
+        advisory,
+        catalog_text,
+    ] if base_text else [
+        _RADIO_CATALOG_HEADER,
         advisory,
         catalog_text,
     ]

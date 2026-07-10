@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..resources import read_instructions
-from ..config import AgentConfig, _resolve_voice_override, _is_truthy, _append_rss_catalog_section
+from ..config import (
+    AgentConfig,
+    _resolve_voice_override,
+    _is_truthy,
+    _append_rss_catalog_section,
+    _append_radio_catalog_section,
+)
 
 _GEMINI_LOGGER = logging.getLogger("voice-agent.gemini")
 _VIDEO_LOGGER = logging.getLogger("voice-agent.video")
@@ -60,6 +66,7 @@ def derive_session_settings(
                 try:
                     instructions_override = read_instructions(prompt_path)
                     instructions_override = _append_rss_catalog_section(instructions_override)
+                    instructions_override = _append_radio_catalog_section(instructions_override)
                     _GEMINI_LOGGER.info("Loaded English instructions from prompt_en.md")
                 except Exception as exc:
                     _GEMINI_LOGGER.warning("Failed to load English prompt: %s", exc)
