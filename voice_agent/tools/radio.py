@@ -346,6 +346,118 @@ def build_ukr_radio_search_url(query: str = "", *, channel: str = "") -> str:
     return f"{_UKR_RADIO_BASE_URL}/programs/{suffix}"
 
 
+async def _fetch_json_url(url: str) -> dict[str, Any]:
+    loop = asyncio.get_running_loop()
+
+    def _download() -> dict[str, Any]:
+        req = urllib_request.Request(
+            url,
+            headers={
+                "User-Agent": os.getenv("VOICE_AGENT_RADIO_USER_AGENT", "VoiceAgentRadio/1.0"),
+                "Accept": "application/json, */*;q=0.8",
+            },
+        )
+        with urllib_request.urlopen(req, timeout=float(os.getenv("VOICE_AGENT_RADIO_FETCH_TIMEOUT", "20"))) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    return await loop.run_in_executor(None, _download)
+
+
+def _ukr_radio_feed_url(*, query: str = "", ids: list[str] | None = None, channel_ids: list[str] | None = None) -> str:
+    params: list[tuple[str, str]] = []
+    ids = [str(item).strip() for item in (ids or []) if str(item).strip()]
+    channel_ids = [str(item).strip() for item in (channel_ids or []) if str(item).strip()]
+    if ids:
+        params.append(("ids", ",".join(ids)))
+    if channel_ids:
+        params.append(("channelIDs", ",".join(channel_ids)))
+    if query.strip():
+        params.append(("q", query.strip()))
+    suffix = urlencode(params, quote_via=quote)
+    return f"{_UKR_RADIO_BASE_URL}/feed.xml?{suffix}" if suffix else f"{_UKR_RADIO_BASE_URL}/feed.xml"
+
+
+async def list_ukr_radio_channels(_: Any = None) -> str:
+    data = await _fetch_json_url(f"{_UKR_RADIO_BASE_URL}/channels.json")
+    return json.dumps(data.get("channels", []), ensure_ascii=False)
+
+
+async def search_ukr_radio_programs(_: Any = None, query: str = "", limit: int | str = 20) -> str:
+    try:
+        limit_value = max(1, min(int(limit), 50))
+    except Exception:
+        limit_value = 20
+    q = _norm(query)
+    channels = (await _fetch_json_url(f"{_UKR_RADIO_BASE_URL}/channels.json")).get("channels", [])
+    results: list[dict[str, Any]] = []
+    for channel in channels:
+        channel_id = str(channel.get("id") or "").strip()
+        if not channel_id:
+            continue
+        try:
+            data = await _fetch_json_url(f"{_UKR_RADIO_BASE_URL}/programs.json?channelID={quote(channel_id)}")
+        except Exception:
+            continue
+        channel_title = data.get("channelTitle") or channel.get("title") or ""
+        channel_haystack = _norm(f"{channel_id} {channel_title}")
+        if q and q in channel_haystack:
+            results.append({
+                "kind": "channel",
+                "id": channel_id,
+                "title": f"{channel_title} — весь канал",
+                "channelTitle": channel_title,
+                "episodeCount": data.get("channelEpisodeCount") or data.get("episodeCount") or 0,
+                "feedUrl": data.get("channelFeedUrl") or _ukr_radio_feed_url(channel_ids=[channel_id]),
+            })
+        for program in data.get("programs", []) or []:
+            title = str(program.get("title") or "")
+            haystack = _norm(" ".join([str(program.get("id") or ""), title, str(channel_title)]))
+            if not q or q in haystack:
+                results.append({
+                    "kind": "program",
+                    "id": str(program.get("id") or ""),
+                    "title": title,
+                    "channelID": str(program.get("channelID") or channel_id),
+                    "channelTitle": channel_title,
+                    "episodeCount": program.get("episodeCount") or 0,
+                    "lastDate": program.get("lastDate") or "",
+                    "feedUrl": program.get("feedUrl") or _ukr_radio_feed_url(ids=[str(program.get("id") or "")]),
+                    "episodesUrl": program.get("episodesUrl") or "",
+                    "sourceUrl": program.get("sourceUrl") or "",
+                })
+                if len(results) >= limit_value:
+                    return json.dumps(results, ensure_ascii=False)
+    return json.dumps(results[:limit_value], ensure_ascii=False)
+
+
+async def build_ukr_radio_rss(
+    _: Any = None,
+    query: str = "",
+    program_ids: str = "",
+    channel_ids: str = "",
+) -> str:
+    ids = [part.strip() for part in re.split(r"[,\s]+", program_ids or "") if part.strip()]
+    ch_ids = [part.strip() for part in re.split(r"[,\s]+", channel_ids or "") if part.strip()]
+    if not query.strip() and not ids and not ch_ids:
+        return "Потрібна ключова фраза, program_ids або channel_ids."
+    feed_url = _ukr_radio_feed_url(query=query, ids=ids, channel_ids=ch_ids)
+    return json.dumps({"action": "radio.rss_built", "feed_url": feed_url, "query": query, "program_ids": ids, "channel_ids": ch_ids}, ensure_ascii=False)
+
+
+async def search_ukr_radio_audio(_: Any = None, query: str = "", limit: int | str = 10) -> str:
+    if not query.strip():
+        return "Потрібна ключова фраза для пошуку в Українському радіо."
+    feed_url = _ukr_radio_feed_url(query=query)
+    return await get_radio_episodes(None, feed=feed_url, limit=limit)
+
+
+async def resolve_ukr_radio_search_episode(_: Any = None, query: str = "", episode_query: str = "latest") -> str:
+    if not query.strip():
+        return "Потрібна ключова фраза для пошуку в Українському радіо."
+    feed_url = _ukr_radio_feed_url(query=query)
+    return await resolve_radio_episode(None, feed=feed_url, query=episode_query or "latest")
+
+
 __all__ = [
     "describe_radio_catalog",
     "list_radio_feeds",
@@ -353,4 +465,9 @@ __all__ = [
     "search_radio_episodes",
     "resolve_radio_episode",
     "build_ukr_radio_search_url",
+    "list_ukr_radio_channels",
+    "search_ukr_radio_programs",
+    "build_ukr_radio_rss",
+    "search_ukr_radio_audio",
+    "resolve_ukr_radio_search_episode",
 ]
