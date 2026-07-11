@@ -229,7 +229,7 @@ class RadioPlaybackController:
                 metadata=metadata or {},
                 volume=self._volume,
                 playback_rate=self._state.playback_rate,
-            
+            )
 
             if self._client_mode():
                 self._state.status = "playing"
